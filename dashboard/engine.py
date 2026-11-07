@@ -143,6 +143,13 @@ class Book:
         asks = [(p, self.asks[p][2], self.asks[p][3]) for p in self.ap]
         return bids, asks
 
+    def level_orders(self, side: int, price: int) -> list[tuple[int, int]]:
+        """The live orders at one price level in queue order (first = next to trade), as (order id, remaining lots)."""
+        level = (self.bids if side == 0 else self.asks).get(price)
+        if level is None:
+            return []
+        return [(o[0], o[3]) for o in level[0][level[1]:] if o[3] > 0]
+
 
 @dataclass
 class Tape:

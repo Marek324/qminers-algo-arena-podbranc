@@ -56,6 +56,13 @@ CSS = f"""<style>
 .lrow.bid {{ --c: rgba(38,166,154,.30); }} .lrow.bid span:first-child {{ color: {UP}; }}
 .lrow.best {{ font-weight: 700; }}
 .lhead {{ opacity: .6; font-size: .75rem; }}
+.lvl summary {{ list-style: none; cursor: pointer; }} .lvl summary::-webkit-details-marker {{ display: none; }}
+.lvl summary:hover {{ outline: 1px solid rgba(128,128,128,.35); }}
+.lorders {{ margin: 0 0 3px 14px; border-left: 2px solid rgba(128,128,128,.3); font-size: .78rem; }}
+.lord {{ display: grid; grid-template-columns: 1.4fr 1fr .9fr; text-align: right; padding: 0 8px; opacity: .85; --c: transparent;
+  background: linear-gradient(to left, var(--c) var(--w, 0%), transparent var(--w, 0%)); }}
+.lorders.ask .lord {{ --c: rgba(239,83,80,.15); }} .lorders.bid .lord {{ --c: rgba(38,166,154,.15); }}
+.lord span:first-child {{ text-align: left; }}
 .lspread {{ text-align: center; opacity: .75; padding: 3px 0; margin: 2px 0; border-top: 1px solid rgba(128,128,128,.3);
   border-bottom: 1px solid rgba(128,128,128,.3); }}
 </style>"""
@@ -92,6 +99,13 @@ def nav_series(source: str, _r: engine.Replay) -> tuple[np.ndarray, np.ndarray]:
         return np.array([0.0, 1.0]), np.array([np.nan, np.nan])
     idx = np.arange(0, len(y), max(1, -(-len(y) // 1500)))
     return np.repeat(x[idx], 2), np.column_stack([np.minimum.reduceat(y, idx), np.maximum.reduceat(y, idx)]).ravel()
+
+
+def fmt_dur(sec: float) -> str:
+    """A candle length in words: 100 ms, 5 s, 2 min."""
+    if sec < 1:
+        return f'{sec * 1000:g} ms'
+    return f'{sec:g} s' if sec < 60 else f'{sec / 60:g} min'
 
 
 def fmt_t(t: float, hrs: bool = False) -> str:
@@ -461,13 +475,19 @@ def cumulative_fig(r: engine.Replay, t: float, t0: float, hrs: bool, revision: s
 
 
 # ---------------------------------------------------------------- ladder (HTML)
-def ladder_html(bids: list, asks: list, n: int) -> str:
+def ladder_html(book: engine.Book, bids: list, asks: list, n: int, expand: bool, ids: bool) -> str:
+    """Bid/ask ladder. Each price level is a <details>: click it (or tick "Show every order") to see its orders in queue order."""
     a, b = asks[:n], bids[:n]
     mx = max([v for _, v, _ in a + b], default=1)
 
     def row(kind: str, lv: tuple, best: bool) -> str:
         p, v, c = lv
-        return f'<div class="lrow {kind}{" best" if best else ""}" style="--w:{100 * v / mx:.1f}%"><span>{p:,}</span><span>{v:,}</span><span>{c}</span></div>'
+        orders = book.level_orders(0 if kind == 'bid' else 1, p)
+        omx = max((q for _, q in orders), default=1)
+        lines = ''.join(f'<div class="lord" style="--w:{100 * q / omx:.1f}%"><span>{j + 1}.{" next to trade" if j == 0 else ""}</span>'
+                        f'<span>{q:,} lots</span><span>{f"#{oid}" if ids else ""}</span></div>' for j, (oid, q) in enumerate(orders))
+        return (f'<details class="lvl"{" open" if expand else ""}><summary class="lrow {kind}{" best" if best else ""}" style="--w:{100 * v / mx:.1f}%">'
+                f'<span>{p:,}</span><span>{v:,}</span><span>{c} &#9662;</span></summary><div class="lorders {kind}">{lines}</div></details>')
 
     out = ['<div class="ladder"><div class="lrow lhead"><span>Price</span><span>Lots</span><span>Orders</span></div>',
            '<div class="lsec ask">Waiting to SELL (asks) &uarr; cheapest at the bottom</div>']
@@ -701,14 +721,6 @@ def view(r: engine.Replay, source: str, opts: dict) -> None:
     o = st.columns([2.6, 3.6, 1.1], vertical_alignment='bottom')
     wlabel = o[0].segmented_control('Chart shows', list(WINDOWS), default='5 min', key='window', on_change=lambda: ss.pop('custom_win', None),
                                     help='How much market time the chart shows around now. You can also drag across the whole-session strip.') or '5 min'
-    bin_label = o[1].segmented_control('One candle =', list(BIN_CHOICES), default='Auto', key='candlebin',
-                                       help='How much time each candle and volume bar covers. Auto picks one from the window.') or 'Auto'
-    with o[2].popover('Chart options', width='stretch'):
-        cand_src = st.radio('Candles from', ['Mid', 'Trades'], key='candsrc', format_func=lambda v: 'Mid price' if v == 'Mid' else 'Trade prices',
-                            help='Mid price changes all the time; trade prices only when something trades, so trade candles have gaps.')
-        show_ba = st.toggle('Best bid/ask lines', value=False, key='showba')
-        show_trades = st.toggle('Show individual trades', value=False, key='showtrades',
-                                help='Small arrows for every trade (up = buyer, down = seller). Hidden when more than 300 are in view.')
     custom = ss.get('custom_win')
     if custom:
         # the stretch dragged on the strip: kept while "now" is inside it, then it follows "now" at the same width
@@ -716,17 +728,31 @@ def view(r: engine.Replay, source: str, opts: dict) -> None:
         x0, x1 = custom if custom[0] <= t <= custom[1] else window_range(t, cw, t0, t1)
         auto_bw = next((b_ for lim, b_ in ((10, 0.1), (60, 1), (300, 5), (900, 10), (3600, 30)) if cw <= lim), 60)
         win_name = f'custom {fmt_t(cw, hrs)}'
-        cc = st.columns([6, 1], vertical_alignment='center')
-        cc[0].caption(f'Showing the stretch you dragged on the whole-session strip: {fmt_t(x0, hrs)} to {fmt_t(x1, hrs)}.')
-        cc[1].button('Back to presets', on_click=lambda: ss.pop('custom_win', None), width='stretch')
     else:
         x0, x1 = window_range(t, WINDOWS[wlabel], t0, t1)
         auto_bw, win_name = AUTO_BIN[wlabel], wlabel
-    bw = BIN_CHOICES[bin_label] or auto_bw
+    bin_label = o[1].segmented_control('One candle =', list(BIN_CHOICES) + ['Custom'], default='Auto', key='candlebin',
+                                       format_func=lambda v: f'Auto ({fmt_dur(auto_bw)})' if v == 'Auto' else v,
+                                       help='How much time each candle and volume bar covers. Auto picks one from the window '
+                                            '(shown in brackets); Custom lets you type any length.') or 'Auto'
+    if bin_label == 'Custom':
+        custom_bw = o[1].number_input('Seconds per candle', min_value=0.001, value=float(ss.get('custombin', 2.0)), step=0.5, format='%g',
+                                      key='custombin', help='Any length in seconds, e.g. 0.25 or 15')
+    with o[2].popover('Chart options', width='stretch'):
+        cand_src = st.radio('Candles from', ['Mid', 'Trades'], key='candsrc', format_func=lambda v: 'Mid price' if v == 'Mid' else 'Trade prices',
+                            help='Mid price changes all the time; trade prices only when something trades, so trade candles have gaps.')
+        show_ba = st.toggle('Best bid/ask lines', value=False, key='showba')
+        show_trades = st.toggle('Show individual trades', value=False, key='showtrades',
+                                help='Small arrows for every trade (up = buyer, down = seller). Hidden when more than 300 are in view.')
+    if custom:
+        cc = st.columns([6, 1], vertical_alignment='center')
+        cc[0].caption(f'Showing the stretch you dragged on the whole-session strip: {fmt_t(x0, hrs)} to {fmt_t(x1, hrs)}.')
+        cc[1].button('Back to presets', on_click=lambda: ss.pop('custom_win', None), width='stretch')
+    bw = float(custom_bw) if bin_label == 'Custom' else (BIN_CHOICES[bin_label] or auto_bw)
     grow = max(1, int(np.ceil((x1 - x0) / bw / 2000)))
     if grow > 1:
+        o[1].caption(f'{fmt_dur(bw)} would give too many candles here; using {fmt_dur(bw * grow)}')
         bw *= grow
-        o[1].caption(f'{bin_label} would give too many candles here; using {bw:g} s')
 
     # ---- 4. chart + order book
     left, right = st.columns([3, 1])
@@ -742,9 +768,12 @@ def view(r: engine.Replay, source: str, opts: dict) -> None:
         st.plotly_chart(nav_fig(nx, ny, x0, x1, t, hrs), width='stretch', config={'displayModeBar': False}, theme='streamlit', key=f'nav{ss.get("_navgen", 0)}',
                         on_select='rerun', selection_mode=('points', 'box'))
     with right:
-        st.markdown('**Order book now**', help='Orders waiting to be traded. Sellers on top (red), buyers below (green). '
-                    'The bar shows how many lots wait at each price.')
-        st.markdown(ladder_html(bids, asks, opts['levels']), unsafe_allow_html=True)
+        hc = st.columns([1.4, 1], vertical_alignment='center')
+        hc[0].markdown('**Order book now**', help='Orders waiting to be traded. Sellers on top (red), buyers below (green). '
+                       'The bar shows how many lots wait at each price. Click a price to see each order there and its lots.')
+        expand = hc[1].toggle('Show every order', key='expandbook', help='Open every price level to list its orders (first = next to trade)')
+        st.markdown(ladder_html(book, bids, asks, opts['levels'], expand, opts['ids']), unsafe_allow_html=True)
+        st.caption('Click a price to list its orders.')
 
     # ---- 5. details
     tabs = st.tabs(['Recent trades', 'What happened (event log)', 'Order book depth', 'Order types', 'Totals'])
@@ -801,6 +830,10 @@ else:
 
 if st.session_state.get('_src') != source:
     st.session_state.update(_src=source, pos=0, playing=False, _nav_last=None)
+# Streamlit keeps a tab's state when the app code is reloaded, so a tab that was playing would carry on by itself: pause instead.
+code_id = Path(__file__).stat().st_mtime
+if st.session_state.get('_code') != code_id:
+    st.session_state.update(_code=code_id, playing=False)
 st.session_state['_r'] = replay_
 tpe = replay_.tape
 head = st.columns([5, 1.3], vertical_alignment='center')

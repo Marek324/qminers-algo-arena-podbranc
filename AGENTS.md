@@ -7,6 +7,7 @@ Qminers Algo Trade Arena hackathon. Our job is to write a **trading strategy**. 
 - `strategies/`: new strategy files. Copy `strategies/template_strategy.py` into a new file and work there.
 - `tools/`: reusable building blocks (regressions, estimators, ...) that get **copied** into strategy files. See [Tools](#tools).
 - `docs/`, `AGENTS.md`, and helper scripts for analysis or parameter sweeps (e.g. `scripts/`, notebooks). These never get submitted.
+- `experiments/`: inactive experiments preserved for later, with their analysis, strategies, helpers and result summaries kept together. `experiments/inventory/` is the archived inventory-penalty/endgame study: its results are historical round-1 evidence, not active recommendations; re-run it on the new dataset before reconsidering it.
 - `data/` and `logs/`: local data and backtest output. Both are git-ignored, so don't commit them.
 
 ## What you must not change
@@ -33,7 +34,9 @@ Current tools:
 
 - `tools/volatility.py`: `RealizedVol` (online volatility in ticks/√s from ~1 s samples, fast warm-up).
 - `tools/markout.py`: `FillMarkout` (running per-lot markout of our own fills a fixed time later).
+- `tools/grid_price.py`: `HiddenPriceGrid` (Bayesian grid filter over the hidden price S and the quiet/volatile regime, exact floor/ceil order-placement likelihoods; lost to the Kalman on round 2).
 - `tools/kalman_price.py`: `HiddenPriceKalman` (1-D Kalman filter for the hidden price S from new limit-order prices, with jump inflation after big IOCs, online offset and noise, censored capped orders).
+- `tools/regime_filter.py`: `RegimeFilter` (online 2-state calm/storm HMM forward filter on per-second counts of far-placed new orders, taker events, wide spread and optionally limit inserts; returns P(storm)).
 
 ## No tests
 

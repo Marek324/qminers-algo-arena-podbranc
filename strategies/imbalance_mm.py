@@ -14,9 +14,13 @@ Each event:
    the highest seen so far is new.
    imbalance = (bid_qty - ask_qty) / (bid_qty + ask_qty) at the touch.
    flow = signed aggressive market volume (buys +, sells -), fading over
-   FLOW_TAU_US; depth = running average touch size. Big aggressive orders
-   keep moving the price for a fraction of a second, so this keeps us from
-   quoting into them.
+   FLOW_TAU_US; depth = running average touch size. In round 1 each IOC
+   pushes the hidden price, so flow predicts the mid. Where IOCs don't push
+   (sample_v2, and some generated markets) the move reverts and the same term
+   loses money, so FLOW_CHECK measures it live: every 50 ms a (flow, mid)
+   sample is paired with the mid move 0.5 s later, and the decayed regression
+   slope (about 5 minutes of memory) scales K_FLOW from 0 (slope <= 0) to full
+   (slope >= FLOW_SLOPE_FULL). No weight until 200 samples are in.
 2. Target bid: the best ask if fair - best_ask >= EDGE_TAKE (cross in; the
    quotes unwind it later), else best_bid + 1 if the spread is 2+ ticks and
    fair - p >= EDGE_IN, otherwise the highest price p <= best_bid with
@@ -36,6 +40,7 @@ Inventory is counted from fills only.
 from __future__ import annotations
 
 import math
+from collections import deque
 
 from simulator.models import (
     OrderBookSnapshot,
@@ -52,19 +57,25 @@ from simulator.strategy import BaseStrategy
 class ImbalanceMMStrategy(BaseStrategy):
     QTY = 200
     MAX_POS = 100
-    EDGE = 0.4           # min ticks between the target price and fair
+    EDGE = 0.3           # min ticks between the target price and fair
     K_IMB = 0.15         # ticks of fair shift at full imbalance
     K_INV = 0.002        # ticks of fair shift per lot of inventory
     KEEP_LEVELS = 1      # how many ticks behind the target an order may stay
     MIN_NEW = 10         # don't send orders smaller than this
     EDGE_IN = 0.5        # min edge to quote inside a 2+ tick spread
-    K_FLOW = 0.5         # ticks of fair shift per touch-depth of recent aggressive volume
-    FLOW_TAU_US = 200_000
+    K_FLOW = 0.8         # ticks of fair shift per touch-depth of recent aggressive volume
+    FLOW_TAU_US = 100_000
     DEPTH_EMA = 0.001
     K_S = 0.75           # weight of the hidden-price estimate: fair moves K_S of the way from mid to S_hat
     S_ALPHA = 0.1        # weight of each new limit order in the per-side price average
     S_LEVELS = 2         # look for new orders this many ticks behind the best price
     EDGE_TAKE = 0.25     # cross the spread (bid at the best ask) when fair - best_ask >= this
+    FLOW_CHECK = True    # scale K_FLOW by how well flow has predicted the mid lately
+    FLOW_SLOPE_FULL = 0.5    # measured slope (mid ticks per unit of flow / depth) for full K_FLOW
+    FLOW_CHECK_TAU_US = 300_000_000   # memory of the check (about 5 minutes)
+    FLOW_CHECK_STEP_US = 50_000       # one sample every 50 ms
+    FLOW_CHECK_H_US = 500_000         # paired with the mid move over the next 0.5 s
+    FLOW_CHECK_MIN = 200.0            # samples (decayed) before the check trusts itself
 
     def __init__(self) -> None:
         super().__init__()
@@ -81,6 +92,14 @@ class ImbalanceMMStrategy(BaseStrategy):
         self.max_id = ''         # highest market order id seen so far (ids only grow)
         self.last_bids = None
         self.last_asks = None
+        # flow check: decayed regression of the later mid move on flow / depth
+        self.fc_pending: deque = deque()
+        self.fc_next = 0
+        self.fc_sxx = 0.0
+        self.fc_sxy = 0.0
+        self.fc_n = 0.0
+        self.fc_decay = math.exp(-self.FLOW_CHECK_STEP_US / self.FLOW_CHECK_TAU_US)
+        self.flow_scale = 0.0 if self.FLOW_CHECK else 1.0
 
     def _cancel(self, oid: str) -> None:
         if oid not in self.cancel_sent:
@@ -132,7 +151,10 @@ class ImbalanceMMStrategy(BaseStrategy):
                     self.flow += tr.quantity if tr.book_side == 'ask' else -tr.quantity
             half = (bq + aq) / 2
             self.depth = half if self.depth == 0 else self.depth + self.DEPTH_EMA * (half - self.depth)
-            fair += self.K_FLOW * self.flow / self.depth
+            x = self.flow / self.depth
+            if self.FLOW_CHECK and now >= self.fc_next:
+                self._flow_check(now, x, mid)
+            fair += self.K_FLOW * self.flow_scale * x
 
         if fair - ba >= self.EDGE_TAKE:
             pb = ba
@@ -152,6 +174,24 @@ class ImbalanceMMStrategy(BaseStrategy):
                 pa += 1
         self._side(1, pb)
         self._side(-1, pa)
+
+    def _flow_check(self, now: int, x: float, mid: float) -> None:
+        """Every FLOW_CHECK_STEP_US: pair old (flow, mid) samples with the mid move since, update the slope."""
+        self.fc_next = now + self.FLOW_CHECK_STEP_US
+        pend = self.fc_pending
+        d = self.fc_decay
+        while pend and now - pend[0][0] >= self.FLOW_CHECK_H_US:
+            _, x0, m0 = pend.popleft()
+            y = mid - m0
+            self.fc_sxx = self.fc_sxx * d + x0 * x0
+            self.fc_sxy = self.fc_sxy * d + x0 * y
+            self.fc_n = self.fc_n * d + 1.0
+        pend.append((now, x, mid))
+        if self.fc_n < self.FLOW_CHECK_MIN or self.fc_sxx <= 0:
+            self.flow_scale = 0.0
+            return
+        slope = self.fc_sxy / self.fc_sxx
+        self.flow_scale = min(1.0, max(0.0, slope / self.FLOW_SLOPE_FULL))
 
     def _scan_new(self, views, sign: int) -> None:
         """Fold market orders newer than max_id, within S_LEVELS of the best price, into the side's average."""

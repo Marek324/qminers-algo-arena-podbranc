@@ -167,27 +167,109 @@ def horizon_lines(series: dict[str, dict], horizons: list[str], title: str, ytit
 
 
 # ---------------------------------------------------------------- sections
-def headline(rep: dict) -> None:
-    b, p, t, m = rep['book'], rep['price'], rep['trades'], rep['maker']
+STATUS = {'good': ('green', 'looks good'), 'warn': ('orange', 'mixed'), 'bad': ('red', 'unfavourable'), 'info': ('blue', 'context')}
+
+
+def kpis(rep: dict) -> None:
+    b, p, m, mp = rep['book'], rep['price'], rep['maker'], rep['max_pnl']
     c = st.columns(6)
-    c[0].metric('Modal spread (ticks)', num(b['modal_spread_ticks'], 'g'), f'1-tick {pct(b["spread_share"]["1"])} of time', delta_color='off', delta_arrow='off')
-    c[1].metric('Vol at 1 s (ticks/√s)', num(p['vol_ticks_per_sqrt_s']['1s'], '.3g'), f'60 s: {num(p["vol_ticks_per_sqrt_s"]["60s"], ".3g")}', delta_color='off', delta_arrow='off')
-    c[2].metric('Var. ratio 60 s / 1 s', num(p['variance_ratio_vs_1s']['60s'], '.2f'), '<1 reverts, >1 trends', delta_color='off', delta_arrow='off')
-    c[3].metric('Trades / s', num(t['trades_per_s'], '.3g'), f'{num(t["volume_per_minute"], ",.0f")} lots/min', delta_color='off', delta_arrow='off')
-    mk5 = m['markout_ticks'].get('5s')
-    c[4].metric('Maker markout 5 s (ticks/lot)', num(mk5, '+.3f'), f'0 ms: {num(m["markout_ticks"].get("0ms"), "+.3f")}', delta_color='off', delta_arrow='off')
-    c[5].metric('Touch moves within 5 ms', pct(b['latency_5ms']['event_weighted']['touch_price_moved_share']), 'after an event', delta_color='off', delta_arrow='off')
-    with st.container(border=True):
-        st.markdown('\n'.join(f'- {h}' for h in rep['highlights']) or 'No highlights.')
+    off = dict(delta_color='off', delta_arrow='off')
+    c[0].metric('Theoretical max PnL', num(mp['theoretical_max']['pnl'], ',.0f'), f'{num(mp["theoretical_max"]["pnl_per_hour"], ",.0f")} / hour', **off,
+                help='Best score any strategy could reach knowing the future, under the simulator rules. See PnL bounds.')
+    c[1].metric('Maker markout 5 s (ticks/lot)', num(m['markout_ticks'].get('5s'), '+.2f'), f'half-spread {num(m["markout_ticks"].get("0ms"), "+.2f")}',
+                **off, help='What a passive fill is worth 5 s later, from the maker side. Positive = making money.')
+    c[2].metric('Typical spread (ticks)', num(b['modal_spread_ticks'], 'g'), f'1 tick {pct(b["spread_share"]["1"])} of time', **off)
+    c[3].metric('Volatility at 1 s (ticks/√s)', num(p['vol_ticks_per_sqrt_s']['1s'], '.3g'), f'per 60 s: {num(p["vol_ticks_per_sqrt_s"]["60s"], ".3g")}/√s',
+                **off)
+    vr = p['variance_ratio_vs_1s']['60s']
+    c[4].metric('Trend vs revert (VR 60 s)', num(vr, '.2f'), '<1 reverts, >1 trends', **off)
+    c[5].metric('Best price moves in 5 ms', pct(b['latency_5ms']['event_weighted']['touch_price_moved_share']), 'after an event', **off,
+                help='How often the touch changes while your order is in flight.')
 
 
-def overview(rep: dict, hrs: bool) -> None:
+def verdict_cards(rep: dict) -> None:
+    vs = rep.get('verdicts') or []
+    cols = st.columns(len(vs) or 1)
+    for col, v in zip(cols, vs, strict=False):
+        color, word = STATUS.get(v['status'], ('gray', ''))
+        with col.container(border=True, height='stretch'):
+            st.markdown(f'**{v["topic"]}** &nbsp; :{color}-badge[{word}]')
+            st.markdown(v['headline'])
+            st.caption(v['detail'])
+
+
+def overview_page(rep: dict, hrs: bool) -> None:
+    kpis(rep)
+    verdict_cards(rep)
+    session_chart(rep, hrs, 'ov_session')
+    c = st.columns(3)
+    with c[0]:
+        m = rep['maker']
+        hs = [h for h in m['markout_ticks'] if h not in ('fills', 'volume')]
+        horizon_lines({'all fills': m['markout_ticks'], 'at touch': m['at_touch']}, hs, 'maker markout (ticks/lot)', '', 'ov_markout', 300)
+    with c[1]:
+        cand = []
+        for n, row in rep['signals']['directional'].items():
+            cand.append((n, row['5s']['spearman']))
+        for n, row in rep['indicators']['evaluation'].items():
+            cand.append((n, row['5s']['spearman']))
+        cand = sorted((x for x in cand if x[1] is not None), key=lambda x: -abs(x[1]))[:6][::-1]
+        fig = go.Figure(go.Bar(y=[n for n, _ in cand], x=[v for _, v in cand], orientation='h',
+                               marker_color=[UP if v >= 0 else DOWN for _, v in cand], hovertemplate='%{y}: %{x:+.3f}<extra></extra>'))
+        style(fig, 300, title=dict(text='top predictors of the 5 s move (Spearman)', font_size=13, x=0))
+        show(fig, 'ov_predictors')
+    with c[2]:
+        pp = rep['orders']['passive_placement']
+        order = ['improve', 'join', 'behind_1', 'behind_2_5', 'behind_6_20']
+        bar(order, [pp[k]['any_fill_prob'] for k in order], 'fill probability by order placement', UP, height=300, pct_axis=True, key='ov_fill')
+    with st.expander('All findings'):
+        st.markdown('\n'.join(f'- {h}' for h in rep['highlights']) or 'No findings.')
+
+
+def market_section(rep: dict, hrs: bool) -> None:
+    st.subheader('Order book')
+    book_tab(rep)
+    st.subheader('Price')
+    price_tab(rep)
+    st.subheader('Over the session')
+    overview(rep, hrs)
+    st.subheader('Regimes across bins')
+    regimes_tab(rep)
+    with st.expander('Tape composition and anomalies'):
+        tape_tab(rep)
+
+
+def flow_section(rep: dict) -> None:
+    st.subheader('Maker markouts')
+    maker_tab(rep)
+    st.subheader('Trades and price impact')
+    trades_tab(rep)
+    st.subheader('Order lifecycle')
+    orders_tab(rep)
+
+
+def signals_section(rep: dict, hrs: bool) -> None:
+    st.subheader('Order book and flow signals')
+    signals_tab(rep)
+    st.subheader('Technical indicators')
+    indicators_tab(rep, hrs)
+
+
+def data_section(rep: dict, name: str, hrs: bool) -> None:
+    st.subheader('Series explorer')
+    series_explorer(rep, hrs)
+    st.subheader('Raw report')
+    raw_tab(rep, name)
+
+
+def session_chart(rep: dict, hrs: bool, key: str) -> None:
+    """Price, aggressive volume and spread per bin over the whole session."""
     bins = rep['bins']
     d = bins['data']
     start = rep['tape']['start_s'] or 0.0
     x = ts(start + (arr(d['t_start_s']) + arr(d['t_end_s'])) / 2)
-    fig = make_subplots(rows=4, cols=1, shared_xaxes=True, row_heights=[0.4, 0.22, 0.19, 0.19], vertical_spacing=0.03,
-                        subplot_titles=('mid OHLC per bin', 'aggressive volume (buy up, sell down)', 'mean spread (ticks)', 'realized vol (ticks)'))
+    fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.58, 0.24, 0.18], vertical_spacing=0.04,
+                        subplot_titles=(f'mid price per {bins["step_s"]:g} s', 'aggressive volume (buy up, sell down)', 'mean spread (ticks)'))
     fig.add_trace(go.Candlestick(x=x, open=arr(d['mid_open']), high=arr(d['mid_high']), low=arr(d['mid_low']), close=arr(d['mid_close']),
                                  name='mid', showlegend=False, whiskerwidth=0, increasing=dict(line=dict(color=UP, width=1), fillcolor=UP),
                                  decreasing=dict(line=dict(color=DOWN, width=1), fillcolor=DOWN)), row=1, col=1)
@@ -196,13 +278,29 @@ def overview(rep: dict, hrs: bool) -> None:
     fig.add_trace(go.Bar(x=x, y=-arr(d['sell_volume']), width=w, marker_color=DOWN, name='sell volume', showlegend=False), row=2, col=1)
     fig.add_trace(go.Scatter(x=x, y=arr(d['spread_mean']), mode='lines', line=dict(color=ACCENT, width=1.4, shape='hv'), name='spread',
                              showlegend=False), row=3, col=1)
-    fig.add_trace(go.Scatter(x=x, y=arr(d['realized_vol_ticks']), mode='lines', line=dict(color=NEUTRAL, width=1.4, shape='hv'), name='rv',
-                             showlegend=False), row=4, col=1)
-    style(fig, 720, barmode='relative', bargap=0.1, dragmode='pan', hovermode='x unified')
+    style(fig, 520, barmode='relative', bargap=0.1, dragmode='pan', hovermode='x unified')
     fig.update_xaxes(rangeslider_visible=False)
     fig.update_annotations(font_size=12, x=0, xanchor='left')
     time_axes(fig, hrs)
-    st.caption(f'{bins["rows"]} bins of {bins["step_s"]:g} s (change with --bin-step in the CLI or the setting above).')
+    show(fig, key)
+
+
+def overview(rep: dict, hrs: bool) -> None:
+    """Session detail per bin: volatility, activity, cancel ratio and imbalance, then the depth heatmap."""
+    bins = rep['bins']
+    d = bins['data']
+    start = rep['tape']['start_s'] or 0.0
+    x = ts(start + (arr(d['t_start_s']) + arr(d['t_end_s'])) / 2)
+    rows = (('realized_vol_ticks', 'realized volatility (ticks)', NEUTRAL), ('events', 'tape events', ACCENT),
+            ('cancel_insert_ratio', 'cancels per insert', DOWN), ('imbalance_mean', 'touch imbalance (bid − ask) / total', UP))
+    fig = make_subplots(rows=len(rows), cols=1, shared_xaxes=True, vertical_spacing=0.04, subplot_titles=[r[1] for r in rows])
+    for i, (col, _, color) in enumerate(rows, 1):
+        fig.add_trace(go.Scatter(x=x, y=arr(d[col]), mode='lines', line=dict(color=color, width=1.4, shape='hv'), name=col, showlegend=False),
+                      row=i, col=1)
+    style(fig, 560, dragmode='pan', hovermode='x unified')
+    fig.update_annotations(font_size=12, x=0, xanchor='left')
+    time_axes(fig, hrs)
+    st.caption(f'{bins["rows"]} bins of {bins["step_s"]:g} s.')
     show(fig, 'an_overview')
 
     # depth heatmap
@@ -264,20 +362,20 @@ def book_tab(rep: dict) -> None:
         style(fig, 260, title=dict(text='depth by ticks from own-side best', font_size=13, x=0), barmode='group',
               yaxis2=dict(overlaying='y', side='right', range=[0, 1.05], tickformat='.0%', showgrid=False))
         show(fig, 'an_depth')
-    st.markdown('**Distributions** (time-weighted unless noted)')
-    table(dist_table({
-        'spread (ticks)': b['spread_ticks'],
-        'spread, event-weighted': b['spread_ticks_event_weighted'],
-        'wide-spread episode (ms)': b['wide_spread_episode_ms'],
-        'touch qty bid': b['touch_qty']['bid'],
-        'touch qty ask': b['touch_qty']['ask'],
-        'touch orders bid': b['touch_orders']['bid'],
-        'touch orders ask': b['touch_orders']['ask'],
-        'imbalance touch': b['imbalance']['touch'],
-        'imbalance 5 levels': b['imbalance']['depth_5'],
-        'imbalance 20 levels': b['imbalance']['depth_20'],
-        'touch price lifetime (ms)': b['dynamics']['touch_price_lifetime_ms'],
-    }))
+    with st.expander('Book distributions (time-weighted unless noted)'):
+        table(dist_table({
+            'spread (ticks)': b['spread_ticks'],
+            'spread, event-weighted': b['spread_ticks_event_weighted'],
+            'wide-spread episode (ms)': b['wide_spread_episode_ms'],
+            'touch qty bid': b['touch_qty']['bid'],
+            'touch qty ask': b['touch_qty']['ask'],
+            'touch orders bid': b['touch_orders']['bid'],
+            'touch orders ask': b['touch_orders']['ask'],
+            'imbalance touch': b['imbalance']['touch'],
+            'imbalance 5 levels': b['imbalance']['depth_5'],
+            'imbalance 20 levels': b['imbalance']['depth_20'],
+            'touch price lifetime (ms)': b['dynamics']['touch_price_lifetime_ms'],
+        }))
 
 
 def price_tab(rep: dict) -> None:
@@ -304,8 +402,8 @@ def price_tab(rep: dict) -> None:
         rows.append({'horizon': h, 'n': r['n'], 'mean': r['mean'], 'std': r['std'], 'skew': r['skew'], 'excess kurtosis': r['kurtosis'],
                      'mean |r|': r['abs_mean'], 'zero share': r['zero_share'], 'up share': r['up_share'], 'autocorr lag1': r['autocorr']['lag1'],
                      'p01': r['quantiles']['p01'], 'p99': r['quantiles']['p99']})
-    st.markdown('**Mid returns by horizon** (ticks, non-overlapping)')
-    table(pd.DataFrame(rows))
+    with st.expander('Mid returns by horizon (ticks, non-overlapping)'):
+        table(pd.DataFrame(rows))
     left, right = st.columns(2)
     et = p['event_time']
     with left:
@@ -338,7 +436,8 @@ def trades_tab(rep: dict) -> None:
         ls = t['levels_swept_share']
         bar([k if k != '4' else '4+' for k in ls], list(ls.values()), 'price levels per aggressive order', NEUTRAL, height=200, pct_axis=True,
             key='an_levels')
-    table(dist_table({
+    with st.expander('Trade distributions'):
+        table(dist_table({
         'trade size': t['trade_size'],
         'aggressive order size': t['taker_event_size'],
         'same-sign run length': t['same_sign_run_length'],
@@ -445,7 +544,8 @@ def orders_tab(rep: dict) -> None:
     with right:
         cp = o['cancel_placement_share']
         bar(list(cp), list(cp.values()), 'where cancels happen', DOWN, pct_axis=True, key='an_cp')
-    table(dist_table({'lifetime, all rested (ms)': o['lifetime_ms']['all_rested'], 'lifetime, canceled (ms)': o['lifetime_ms']['canceled'],
+    with st.expander('Order lifetimes'):
+        table(dist_table({'lifetime, all rested (ms)': o['lifetime_ms']['all_rested'], 'lifetime, canceled (ms)': o['lifetime_ms']['canceled'],
                       'lifetime, filled (ms)': o['lifetime_ms']['filled'], 'queue ahead on join (lots)': o['queue_ahead_on_join']}))
     if o['join_fill_prob_by_queue_ahead']:
         st.markdown('**Touch joiners: fill probability by queue ahead**')
@@ -468,7 +568,8 @@ def tape_tab(rep: dict) -> None:
     with right:
         top = t['insert_size_top']
         bar([r['size'] for r in top], [r['share'] for r in top], 'most common insert sizes', NEUTRAL, pct_axis=True, key='an_sizes')
-    table(dist_table({'insert size': t['insert_size'], 'inter-arrival (µs)': t['timing']['interarrival_us'],
+    with st.expander('Tape distributions'):
+        table(dist_table({'insert size': t['insert_size'], 'inter-arrival (µs)': t['timing']['interarrival_us'],
                       'events per second': t['timing']['events_per_second'], 'events in next 5 ms': t['timing']['events_in_next_5ms']}))
     st.markdown('**Tape anomalies**')
     table(pd.DataFrame([{'anomaly': k, 'count': v} for k, v in t['anomalies'].items()]))
@@ -663,31 +764,17 @@ def render(source: str, name: str, csv: Path | None, data: bytes | None) -> None
         return
 
     hrs = (rep['tape']['end_s'] or 0) >= 3600
-    headline(rep)
-    tabs = st.tabs(['Overview', 'Series', 'Book', 'Price', 'Trades & impact', 'Maker markouts', 'Max PnL', 'Orders', 'Tape', 'Signals', 'Indicators', 'Regimes', 'Raw'])
-    with tabs[0]:
-        overview(rep, hrs)
-    with tabs[1]:
-        series_explorer(rep, hrs)
-    with tabs[2]:
-        book_tab(rep)
-    with tabs[3]:
-        price_tab(rep)
-    with tabs[4]:
-        trades_tab(rep)
-    with tabs[5]:
-        maker_tab(rep)
-    with tabs[6]:
+    overview_page(rep, hrs)
+    st.divider()
+    section = st.segmented_control('Details', ['Market & book', 'Flow & execution', 'Signals', 'PnL bounds', 'Data'], default='Market & book',
+                                   key='an_section') or 'Market & book'
+    if section == 'Market & book':
+        market_section(rep, hrs)
+    elif section == 'Flow & execution':
+        flow_section(rep)
+    elif section == 'Signals':
+        signals_section(rep, hrs)
+    elif section == 'PnL bounds':
         max_pnl_tab(rep, hrs)
-    with tabs[7]:
-        orders_tab(rep)
-    with tabs[8]:
-        tape_tab(rep)
-    with tabs[9]:
-        signals_tab(rep)
-    with tabs[10]:
-        indicators_tab(rep, hrs)
-    with tabs[11]:
-        regimes_tab(rep)
-    with tabs[12]:
-        raw_tab(rep, name)
+    else:
+        data_section(rep, name, hrs)

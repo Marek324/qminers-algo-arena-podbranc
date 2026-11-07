@@ -22,6 +22,7 @@ from .util import US, clean
 SCHEMA_VERSION = 1
 SECTION_ORDER = (
     'meta',
+    'verdicts',
     'highlights',
     'tape',
     'orders',
@@ -75,6 +76,7 @@ def analyze(
     report['series'] = timed('series', series_section, ctx)
     report = clean(report)
     report['highlights'] = highlights(report)
+    report['verdicts'] = verdicts(report)
     report['meta'] = {
         'schema_version': SCHEMA_VERSION,
         'source': str(path) if isinstance(path, Path) else name,
@@ -178,6 +180,66 @@ def highlights(r: dict) -> list[str]:
         )
     if an.get('duplicate_insert_while_resting'):
         out.append(f'WARNING: {an["duplicate_insert_while_resting"]} inserts reuse a resting id; the simulator would raise on these.')
+    return out
+
+
+def verdicts(r: dict) -> list[dict]:
+    """Four strategy questions answered with a status (good / warn / bad / info), a headline and one line of detail."""
+    out = []
+
+    mk = _get(r, 'maker', 'markout_ticks', default={})
+    mk0, mk5, mk60 = mk.get('0ms'), mk.get('5s'), mk.get('60s')
+    mx = _get(r, 'max_pnl', 'theoretical_max', 'pnl')
+    mo = _get(r, 'max_pnl', 'making_only', 'pnl')
+    share = mo / mx if mx and mo is not None else None
+    if mk5 is None:
+        out.append({'topic': 'Market making', 'status': 'info', 'headline': 'No passive fills to judge', 'detail': ''})
+    else:
+        status = 'good' if mk5 > 0.1 and (mk60 or 0) > 0 else 'warn' if mk5 > 0 else 'bad'
+        head = (f'Passive fills keep {mk5:+.2f} ticks/lot after 5 s' if mk5 > 0 else f'Adverse selection: passive fills lose {mk5:+.2f} ticks/lot by 5 s')
+        out.append({'topic': 'Market making', 'status': status, 'headline': head,
+                    'detail': f'half-spread captured {mk0:+.2f}, after 60 s {mk60:+.2f} ticks/lot; a perfect-foresight maker reaches {_pct(share)} of the theoretical max.'})
+
+    best = None
+    for name, row in _get(r, 'signals', 'directional', default={}).items():
+        sp = _get(row, '1s', 'spearman')
+        if sp is not None and (best is None or abs(sp) > abs(best[1])):
+            best = (name, sp, _get(row, '1s', 'hit_rate'))
+    oos = _get(r, 'signals', 'linear_combination', '1s', 'r2_out_of_sample')
+    rk = _get(r, 'indicators', 'ranking_by_abs_spearman_5s', default=[])
+    ind = rk[0] if rk else None
+    if best is None:
+        out.append({'topic': 'Direction', 'status': 'info', 'headline': 'Not enough data for signals', 'detail': ''})
+    else:
+        status = 'good' if abs(best[1]) > 0.2 and (oos or 0) > 0.05 else 'warn' if abs(best[1]) > 0.1 else 'bad'
+        ind_txt = f'best technical indicator {ind["indicator"]} {ind["spearman_5s"]:+.3f} at 5 s' if ind and ind['spearman_5s'] is not None else 'no indicator data'
+        out.append({'topic': 'Direction', 'status': status,
+                    'headline': f'{best[0]} predicts the 1 s move (Spearman {best[1]:+.2f}, hit {_pct(best[2])})',
+                    'detail': f'linear combo of book features out-of-sample R² {oos if oos is not None else float("nan"):.2f}; {ind_txt}.'})
+
+    vr = _get(r, 'price', 'variance_ratio_vs_1s', '60s')
+    rev = _get(r, 'price', 'event_time', 'reversal_prob')
+    vc = _get(r, 'regimes', 'autocorr_vol', 'lag1')
+    t = _get(r, 'price', 'trend', 't_stat_60s_returns')
+    if vr is None:
+        out.append({'topic': 'Regime', 'status': 'info', 'headline': 'Too short to judge', 'detail': ''})
+    else:
+        kind = 'mean-reverting' if vr < 0.8 else 'trending' if vr > 1.2 else 'close to a random walk'
+        out.append({'topic': 'Regime', 'status': 'info', 'headline': f'{kind.capitalize()} at minute scale (variance ratio {vr:.2f})',
+                    'detail': f'next mid change reverses {_pct(rev)} of the time; drift t-stat {t if t is not None else float("nan"):+.1f}; '
+                              f'volatility clustering (bin autocorr) {vc if vc is not None else float("nan"):+.2f}.'})
+
+    lat = _get(r, 'book', 'latency_5ms', 'event_weighted', 'touch_price_moved_share')
+    wide = sum(v or 0 for k, v in _get(r, 'book', 'spread_share', default={}).items() if k not in ('1', '2'))
+    dup = _get(r, 'tape', 'anomalies', 'duplicate_insert_while_resting', default=0)
+    imp = _get(r, 'trades', 'impact_ticks', '1s', 'mean_ticks')
+    if lat is None:
+        out.append({'topic': 'Risks', 'status': 'info', 'headline': 'Not enough data', 'detail': ''})
+    else:
+        status = 'bad' if lat > 0.1 or dup else 'warn' if lat > 0.02 or wide > 0.1 else 'good'
+        out.append({'topic': 'Risks', 'status': status, 'headline': f'Best price moves within the 5 ms latency after {_pct(lat)} of events',
+                    'detail': f'spread >= 3 ticks {_pct(wide)} of the time; aggressive orders move the mid {imp if imp is not None else float("nan"):+.2f} ticks in 1 s'
+                              + (f'; {dup} duplicate order ids (simulator would raise)' if dup else '') + '.'})
     return out
 
 

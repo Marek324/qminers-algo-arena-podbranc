@@ -38,6 +38,7 @@ Spread and touch stats use only moments with both sides present.
 | Key | What it answers |
 |---|---|
 | `meta` | source, schema version, units, config (series/bin step, 100 ms grid, 5 ms latency), runtime per section |
+| `verdicts` | four strategy questions, each `{topic, status, headline, detail}` with status `good` / `warn` / `bad` / `info`: Market making (maker markout and the making share of the theoretical max), Direction (strongest book signal, out-of-sample R², best technical indicator), Regime (variance ratio, reversals, drift, volatility clustering), Risks (touch moves during the 5 ms latency, wide spreads, impact, duplicate ids) |
 | `highlights` | list of plain-language takeaways generated from the numbers below |
 | `tape` | row counts, insert/cancel/IOC mix, buy/sell split, event timing (inter-arrival, events per second, events in the next 5 ms), insert sizes, price range and last-digit clustering, IOC fill rates, `anomalies` (cancels of filled/unknown orders, duplicate ids) |
 | `orders` | outcome of every inserted order (filled / canceled / IOC remainder / still resting), marketable share, `passive_placement` = fill probability, cancel probability, lifetime and time to first fill by placement relative to the touch (`improve`, `join`, `behind_1`, `behind_2_5`, `behind_6_20`, `behind_gt20`, `side_empty`), lifetimes, cancel speed, where cancels happen, fill probability of touch-joiners by queue ahead |

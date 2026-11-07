@@ -9,7 +9,9 @@ Maker leg (the money on round 1): quotes passively around a fair price.
 - Quote prices: the best price that keeps at least EDGE ticks from fair; cross the spread when fair
   is EDGE_TAKE beyond the opposite best price; inside a 2+ tick spread only with EDGE_IN of edge.
 - Orders are as large as the position cap allows. An order the target moves a tick away from is
-  kept rather than re-sent, and the deepest kept order is cancelled when room is needed.
+  kept rather than re-sent, and the deepest kept order is cancelled when room is needed. An order
+  the target moves *behind* is also kept while it has KEEP_EDGE (0.25) of edge left, so a small
+  dip in fair does not throw away its queue place (joining still needs EDGE, 0.3).
 
 Taker leg (safety, idle on round 1): holds a directional position when order flow imbalance (OFI,
 Cont, Kukanov & Stoikov) predicts a move, but only while a paper-traded 1-lot shadow copy of it is
@@ -89,6 +91,7 @@ EDGE_IN = 0.5  # min ticks of edge to quote inside a 2+ tick spread
 EDGE_TAKE = 0.25  # cross (bid at the best ask) when fair is at least this far through it
 LADDER_LEVELS = 2  # an order the target moves away from is kept up to LADDER_LEVELS - 1 ticks behind it
 MIN_NEW = 10  # smallest new order worth sending
+KEEP_EDGE = 0.25  # an existing order priced better than the target is kept while it has this much edge
 
 # Risk
 MAX_POS = 100  # worst case |inventory| if every open order on one side fills (penalty only above 100)
@@ -387,13 +390,15 @@ class AdaptiveMarketMaker(BaseStrategy):
                 pa += 1
         return pb, pa
 
-    def _manage_ladder(self, side: Side, top: int | None) -> None:
+    def _manage_ladder(self, side: Side, top: int | None, fair: float = 0.0) -> None:
         """Hold QUOTE_SIZE at `top`, and keep (never move) older orders up to LADDER_LEVELS - 1 ticks behind it.
 
         When the target moves a tick away from a resting order, the order stays where it is and keeps
-        its queue place. Orders priced better than `top` or deeper than the band are cancelled; they
-        count towards risk until the cancel is confirmed. New size goes to `top`, capped by the risk
-        room; when there is no room, the deepest kept order is cancelled to make some.
+        its queue place. An order priced better than `top` is also kept, and counts as the order at
+        `top`, while it still has KEEP_EDGE of edge (joining needs EDGE); otherwise it is cancelled, as
+        are orders deeper than the band. Cancelled orders count towards risk until confirmed. New size
+        goes to `top`, capped by the risk room; when there is no room, the deepest kept order is
+        cancelled to make some (without that, PnL fell by about 140k).
         """
         step = -1 if side is BUY else 1
         at_top = 0
@@ -402,7 +407,9 @@ class AdaptiveMarketMaker(BaseStrategy):
             if order[0] is not side or order[3] or order[4]:
                 continue
             depth = (order[1] - top) * step if top is not None else -1
-            if depth < 0 or depth >= LADDER_LEVELS:
+            if depth < 0 and top is not None and (fair - order[1] if side is BUY else order[1] - fair) >= KEEP_EDGE:
+                at_top += order[2]  # queue hysteresis: a placed order with KEEP_EDGE left stands in for the target order
+            elif depth < 0 or depth >= LADDER_LEVELS:
                 self.cancel_order(order_id)
                 order[4] = True
             elif depth == 0:
@@ -440,8 +447,8 @@ class AdaptiveMarketMaker(BaseStrategy):
         if MAKE_ENABLED:
             fair = self._fair(snapshot, trades, bid, bid_qty, ask, ask_qty)
             pb, pa = self._targets(fair, bid, ask)
-            self._manage_ladder(BUY, pb)
-            self._manage_ladder(SELL, pa)
+            self._manage_ladder(BUY, pb, fair)
+            self._manage_ladder(SELL, pa, fair)
 
     def on_private_order_update(self, event: PrivateOrderEvent) -> None:
         """Update inventory from fills, and drop orders that are filled, cancelled or rejected."""

@@ -546,3 +546,186 @@ simple fair-value bond trading.
 - **Micro-states within round 1** (what a strategy reacts to): 1- vs 2-tick spread (2-tick spreads last about 23 ms);
   the book lagging S (half-life about 200 ms); the second after a big IOC (S just pushed, about +0.8 ticks for 1,000
   lots); strong queue imbalance; inventory near ±100.
+
+## Private round 1 run vs public (AdaptiveMarketMakerPlus, colleague's shrink version, EDGE 0.3)
+
+| | public round1.csv | private scored tape |
+|---|---|---|
+| PnL | 678,057 (±10,421) | 667,357 (±10,365) |
+| our fills / lots traded | 29,488 / 2.245M | 29,123 / 2.213M |
+| PnL per lot traded | 0.302 | 0.3015 |
+| volatility (ticks/√s) | 1.15 | 1.146 |
+| market taker events / lots | 96,012 / 13.72M | 95,143 / 13.58M |
+| taker size mean / median | 143 / 59 | 143 / 59 |
+| net price drift | +29 | −61 |
+| inventory median, max drawdown | 84, 547 | 85, 592 |
+
+- **The private tape is the same generator** with a different random session: same volatility, same taker size distribution, and about 1% less taker volume.
+- **The −10.7k gap is about one standard error.** Per lot traded the strategy earned the same (0.302 vs 0.3015). About 1.4% fewer lots traded explains roughly −9.5k.
+- **The loss is spread evenly** across the half hours (−4.4k to +2.9k each), with no single bad episode and no penalty.
+- Expect about ±10k to ±20k between sessions. The three synthetic twins spread 636k – 655k for adaptive_mm.
+
+## Closing the gap to 800k: experiments on adaptive_mm_plus (what was submitted)
+
+**Benchmark** (round 1 / three twins / total):
+
+| Strategy | Round 1 | Twins | Total |
+|---|---|---|---|
+| adaptive_mm (edge 0.4) | 667.9k | 636k – 655k | 2,597.7k |
+| adaptive_mm_plus | 678.1k | 660k – 673k | 2,674.8k |
+| queue_mm | 605.4k | 651k – 672k | 2,584.0k |
+| penalty_mm | −1.30M | −1.33M to −1.39M | −5.39M (8.0M in penalties) |
+
+**Permanent IOC push in Ŝ** (shift the hidden-price estimate by κ · size^0.65 per aggressive order): rejected.
+- κ 0.004 gives +17k on round 1 but −30k to −50k on every twin; 0.009 and 0.014 are much worse.
+- Ŝ already absorbs the push through new orders placed around the moved S, so adding it double-counts.
+- A textbook case of fitting the tape rather than the generator.
+
+**Edge 0.4 on adaptive_mm_plus:** adopted.
+
+| | Round 1 | Twins (each) | Stress set (8 tapes) | Controls (sample_v2 / null / follow) |
+|---|---|---|---|---|
+| edge 0.3 | 678.1k | 660k – 673k | 1,325.9k | 249.6k / −11.8k / −25.3k |
+| **edge 0.4** | 672.9k | **679k – 691k** | **1,374.6k** (better in all 8) | 252.0k / −12.1k / −25.0k |
+
+**Other settings at edge 0.4** (all rejected):
+- **Quote size 150:** worse on round 1 (−25k) and the twins.
+- **Flow weight 1.0:** +7k on round 1, −11k to −16k per twin.
+- **Take edge 0.31:** +9k to +14k per twin but −17k on round 1. About +4k on the 4-session average, so 0.25 is kept.
+
+**Shrink fix:** a shrink that comes back REJECTED keeps the order tracked even with a cancel in flight. Before, it was forgotten while possibly still live, which could put inventory out of sync. No PnL effect; that drift was never seen in testing.
+
+**Lesson:** tune on the generator (many twins plus the public tape), not on the public tape alone. The private round 1 tape was a different session from the same generator: profit per lot was identical (0.302 vs 0.3015).
+
+## Round 2: where adaptive_mm_vol's PnL comes from (full-logs run, pnl 131,725)
+
+Our fills marked out against later market-vs-market trade prices (ticks per lot):
+
+| our fills | lots | 1 s | 5 s | 30 s |
+|---|---|---|---|---|
+| crossing LIMIT (fair EDGE_TAKE through the opposite best) | 257k | +0.75 | +0.87 | +0.57 |
+| passive, closing inventory | 223k | -0.22 | -0.35 | +0.21 |
+| passive, opening inventory (incl. from flat) | 76k | -0.51 | -0.13 | -0.37 |
+| taker-leg IOC | 8k | -0.72 | -2.90 | +1.33 |
+
+- The crosses (following Ŝ and the flow term) earn the money; passive opening fills and the OFI IOC leg lose it.
+- Inventory is not stuck long: |inventory| >= 90 for 56% of the time, split 30% long / 27% short. 200-lot passive quotes
+  flip it from one cap to the other in a single fill, which leaves no room for the profitable crosses.
+- Passive fills by the size of the IOC that hit us: IOCs up to 150 lots +0.3 to +0.5 at 5 s, 400+ lots -0.5 to -0.8.
+- `strategies/adaptive_mm_r2.py` acts on this: IOC leg off, passive quotes only close inventory (PASSIVE_OPEN), excess
+  passive size is trimmed, separate passive inventory skew (K_INV_QUOTE). Untested.
+
+**"Buy the dip" does not fit this tape.** Variance ratio 60 s/1 s is 1.27 (trending), 1 s returns autocorrelate +0.03,
+the next mid change reverses only 38% of the time, and the market's passive fills are still -0.49 ticks/lot after 60 s.
+In the fitted generator each IOC moves the hidden price S for good, so a dip caused by a big sell does not come back.
+Buying dips is what a passive bid already does, and it is the losing part of the book above.
+
+**What the literature says can be predicted:** the jump itself, from what we already see.
+- Zheng, Moulines & Abergel, "Price Jump Prediction in Limit Order Book" ([arXiv:1204.1381](https://arxiv.org/abs/1204.1381)):
+  a jump = a market order that executes beyond the best price; trade sign, market order size and the liquidity at the
+  best quotes predict it. For us: a thin touch on one side plus Ŝ leaning that way means the next big IOC sweeps it.
+- Donier, Bonart, Mastromatteo & Bouchaud, transient vs permanent impact ([arXiv:1412.0141](https://arxiv.org/abs/1412.0141)),
+  and Taranto et al. ([arXiv:1602.02735](https://arxiv.org/abs/1602.02735)): in real markets part of the impact
+  decays, which is what makes dip-buying pay there. Our generator's push is permanent, so there is no decay to harvest.
+- Jump-aware market making (Heston-Bates style HJB quotes, [arXiv:2405.03496](https://arxiv.org/abs/2405.03496)):
+  widen or pull when jump intensity is high; no closed form we can drop in.
+- Competitions: Optiver Ready Trader Go has no published winning write-up; the 2021 winners describe heuristics plus "a
+  model capturing short-term market dynamics". IMC Prosperity notes are above. None faced a jumpy, permanent-impact tape.
+
+**Lead to try next:** the market's passive fills made right after a sweep lose most (spread 2 before the fill: -1.11 at
+1 s, spread 3+: -1.29, against -0.25 at a 1-tick spread). Pulling passive quotes on the side a sweep is heading to, for a
+few hundred ms after a large IOC or a widened spread, targets exactly the fills that hurt.
+
+### adaptive_mm_r2 tuning on round 2 (one run at a time, full tape)
+
+| setting | pnl |
+|---|---|
+| adaptive_mm_vol.py | 131,725 |
+| adaptive_mm_r2, old settings (IOC leg off, passive only unwinds) | 174,377 |
+| EDGE_TAKE 0.12 (0.0: 39k, 0.05: 190k, 0.1: 207k, 0.15: 199k, 0.3: 156k) | 209,944 |
+| S_ALPHA 0.25 (0.05: 208k, 0.2: 226k, 0.3: 227k, 0.45: 215k), EDGE_TAKE 0.13 | 231,426 |
+
+- Crossing is now the whole edge (about +1 tick/lot at 5 s), so what moves PnL is when to cross and how fast Ŝ
+  follows S. Faster Ŝ (S_ALPHA) was the second-largest gain.
+- Unwinding faster loses: K_INV_QUOTE 0.004: 194k, 0.008: 55k, 0.015: -257k. Passive closes lose at 5 s but gain at 30 s.
+- No effect: passive EDGE 0.4–1.0, CROSS_DEEP (cross several levels), the post-sweep guard (pulling passive quotes
+  after a 100–1000 lot sweep). K_FLOW 0.8 beats 0.5 and 1.2. K_S 0.5–1.0 is flat.
+- **Next: a Kalman filter for S** (a continuous-state HMM). Observations: new limit prices (buy ≈ S − X, sell ≈ S + X)
+  and IOC prices (round(S ± 1)); process noise grows with elapsed time and jumps after big IOCs. That makes the
+  S_ALPHA speed adaptive: fast right after a jump, slow when calm. A discrete regime HMM (calm/jumpy) is less promising:
+  per-minute volatility has lag-1 autocorrelation of only 0.17, so jumpy minutes do not persist, and drift is not
+  significant (t = −0.85).
+
+### Kalman filter for S on round 2 (`tools/kalman_price.py`, `KF` in adaptive_mm_r2)
+
+- 1-D Kalman filter: new limit orders near the touch are noisy readings of S (buy ≈ S − m, sell ≈ S + m, with m and
+  the noise learned online); variance grows with time (KF_Q × vol scale²) and after every aggressive order
+  (KF_JUMP × lots^1.3); an order one tick from the opposite best is treated as a bound only (censored); swept trades
+  bound S (IOC price = round(S ± 1)).
+- **Prediction:** on the first 1,100 s, R² of (Ŝ − mid) for the next mid move: 0.1 s 0.107 vs 0.071 (running
+  averages, S_ALPHA 0.25), 0.5 s 0.090 vs 0.062, 1 s 0.044 vs 0.029. Slope at 0.5 s is 0.91, so Ŝ is about calibrated.
+- **PnL:** 235,976 (EDGE_TAKE 0.2, K_S 0.65) vs 231,426 with the averages: within noise (pnl_se ≈ 19k).
+- **What matters inside it:** jump inflation. KF_JUMP 0: 206k, 2e-4: 230k, 1e-3: 232k, 3e-3: 226k, 1e-2: 219k.
+  KF_Q 0.05–0.4 flat. Mean push (KF_PUSH) 0.005 same, 0.015 worse. Censoring off: −4k.
+- **Reading:** a 50% better short-horizon forecast added little PnL, and |inventory| median rose to 80. The crosses
+  are now limited by the ±100 position cap more than by the estimate. Next levers are about capacity: exit a position
+  once Ŝ − mid has closed (signal-based exit by crossing at small edge), or size crosses by forecast strength so the
+  cap is spent on the strongest signals.
+
+### Freeing position capacity on round 2: rejected
+
+Baseline adaptive_mm_r2 with KF: 235,976 (|inventory| median 80).
+
+| change | pnl |
+|---|---|
+| CROSS_FULL 1.5 / 2 / 3 (cross only up to MAX_POS × edge / (EDGE_TAKE × CROSS_FULL)) | 233k / 224k / 208k |
+| EXIT_MULT 0.7 / 0.4 / 0 (flatten by crossing at a lower edge) | 224k / 218k / 193k |
+| EXIT_MULT 1.5 / 2.5 (exits need more edge) | 233k / 204k |
+| K_INV 0 / 0.004 (inventory skew of the fair used for crossing; 0.0015 now) | 229k / 164k |
+
+Together with K_INV_QUOTE (stronger passive unwinding: 55k at 0.008), every way of getting flat sooner or holding less
+loses. The signal persists (crosses still mark out +0.6 to +1.5 ticks/lot at 30 s), so a full position is worth
+keeping until the opposite signal crosses it out. Sitting near ±100 is a symptom of a long-lived edge, not a leak.
+Remaining room is in entering earlier or at better prices, not in capacity.
+
+### Three bigger changes on round 2, all rejected (built as `strategies/adaptive_mm_r3.py`, since deleted)
+
+Ideas from the "more drastic changes" list, built behind flags on top of adaptive_mm_r2 (235,976) and ablated.
+EDGE_TAKE 0.2 throughout (pnl, fills):
+
+| fitted fair | entries | queue | pnl | fills |
+|---|---|---|---|---|
+| off | off | off | 235,976 | 5,774 |
+| on | on | on | 210,978 | 7,665 |
+| on | on | on, EDGE_TAKE 0.1 | 139,844 | 10,623 |
+| off | on | on | 210,732 | 8,423 |
+| on | off | on | 207,796 | 3,057 |
+| on | on | off | 196,013 | 10,481 |
+| on | off | off | 198,944 | 3,180 |
+| on (W_FLOW 1.9) | off | off | 209,336 | 7,088 |
+| off | on | off | 210,395 | 11,610 |
+| off | on (ENTRY_EDGE 0.3) | off | 216,926 | 7,270 |
+| off | off | on | 226,301 | 5,191 |
+| off | off | on (JOIN 300, KEEP 600) | 231,556 | 5,454 |
+
+Settings: entries joined the best price with full size once fair was ENTRY_EDGE (0.15 × vol scale^1.2) beyond it;
+the queue rule posted only where at most QUEUE_JOIN (150) market lots were queued and cancelled orders with more than
+QUEUE_KEEP (300) ahead.
+
+| on | pnl |
+|---|---|
+| none (= adaptive_mm_r2) | 235,976 |
+| all three | 210,978 |
+| fitted fair only | 198,944 (209,336 with the flow weight set back to 1.9) |
+| resting entries only | 210,395 (216,926 with a stricter entry edge) |
+| queue-front only | 226,301 (231,556 with looser limits) |
+
+- **Fitted fair:** OLS of the 1 s mid move on Ŝ − mid (0.55), imbalance (0.0), flow (0.49) and last trade sign (0.09)
+  forecasts slightly better (R² 0.034 vs 0.029) but trades worse. The hand-tuned flow weight (about 2) is far above
+  its forecast weight: crossing right after a big IOC pays more than its average 1 s move says.
+- **Resting entries:** joining the touch ahead of the cross doubles the fills and loses 20k–26k. Passive touch fills are
+  adversely selected on round 2 even on the side the signal favours, so paying the spread on a strong signal wins.
+- **Queue-front quoting:** never joining long queues and cancelling deep orders loses 5k–10k; it mostly blocks the
+  passive unwinds.
+- Every knob moved toward "off" as it was loosened, so these are not tuning misses. Round 2 rewards taking on a strong
+  signal and holding; making is a cost centre here.

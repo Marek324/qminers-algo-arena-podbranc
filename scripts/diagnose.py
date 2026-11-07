@@ -88,6 +88,13 @@ def main(path: str) -> None:
         j = idx(ev.t.values + int(h * 1e6))
         edge[h] = float((ev.s * (ev.vw - mid[j]) * ev.q).sum() / ev.q.sum())
     print('  ', {f'{h}s': round(v, 2) for h, v in edge.items()})
+    # split by aggressor size: big orders that empty a level are often informed
+    j5 = idx(ev.t.values + 5_000_000)
+    ev['e5'] = ev.s * (ev.vw - mid[j5])
+    ev['qb'] = pd.qcut(ev.q, 5, duplicates='drop')
+    by = ev.groupby('qb', observed=True).apply(lambda g: (g.e5 * g.q).sum() / g.q.sum(), include_groups=False)
+    print('   5s edge by aggressor size:', {str(k): round(v, 2) for k, v in by.items()})
+    small_edge = float(by.iloc[0])
 
     # 4. imbalance
     sub = b.iloc[:: max(1, len(b) // 200_000)]
@@ -118,6 +125,10 @@ def main(path: str) -> None:
     elif edge[5] > 0.2:
         print(f'  MARKET MAKING: resting fills earn {edge[5]:.2f} ticks/lot after 5s and flow is '
               f'uninformed. Start from strategies/imbalance_mm.py')
+    elif small_edge > 0.2:
+        print(f'  MARKET MAKING, with care: average fill edge is small ({edge[5]:.2f}) but fills against '
+              f'small aggressors earn {small_edge:.2f}; big aggressors are informed. Start from '
+              f'strategies/imbalance_mm.py and use the flow term (K_FLOW) so quotes step away after big orders')
     else:
         print('  UNCLEAR: neither edge is large. Check adverse selection by trade size and time of day.')
     if corr[0.5] > 0.2:

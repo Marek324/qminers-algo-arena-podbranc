@@ -6,11 +6,15 @@ them). Resting orders earn the spread, so profit is set by how many lots get
 filled, and that depends on queue position.
 
 Each event:
-1. fair = mid + K_IMB * imbalance - K_INV * inventory, where
+1. fair = mid + K_IMB * imbalance + K_FLOW * flow / depth - K_INV * inventory
    imbalance = (bid_qty - ask_qty) / (bid_qty + ask_qty) at the touch.
-2. Target bid: the highest price p <= best_bid + 1 (inside the spread when
-   it is 2+ ticks wide), below the best ask, with fair - p >= EDGE. The ask
-   mirrors it.
+   flow = signed aggressive market volume (buys +, sells -), fading over
+   FLOW_TAU_US; depth = running average touch size. Big aggressive orders
+   keep moving the price for a fraction of a second, so this keeps us from
+   quoting into them.
+2. Target bid: best_bid + 1 if the spread is 2+ ticks and fair - p >= EDGE_IN,
+   otherwise the highest price p <= best_bid with fair - p >= EDGE. The ask
+   mirrors it. (Quoting inside the spread lost money on every tape so far.)
 3. Orders are sticky: an order that ended up behind the target price keeps
    resting (and keeps its queue place) while it is within KEEP_LEVELS of the
    target. Orders priced more aggressively than the target, or deeper than
@@ -23,6 +27,8 @@ Inventory is counted from fills only.
 """
 
 from __future__ import annotations
+
+import math
 
 from simulator.models import (
     OrderBookSnapshot,
@@ -39,11 +45,15 @@ from simulator.strategy import BaseStrategy
 class ImbalanceMMStrategy(BaseStrategy):
     QTY = 200
     MAX_POS = 100
-    EDGE = 0.5           # min ticks between the target price and fair
+    EDGE = 0.4           # min ticks between the target price and fair
     K_IMB = 0.3          # ticks of fair shift at full imbalance
     K_INV = 0.002        # ticks of fair shift per lot of inventory
     KEEP_LEVELS = 1      # how many ticks behind the target an order may stay
     MIN_NEW = 10         # don't send orders smaller than this
+    EDGE_IN = 0.5        # min edge to quote inside a 2+ tick spread
+    K_FLOW = 0.5         # ticks of fair shift per touch-depth of recent aggressive volume
+    FLOW_TAU_US = 200_000
+    DEPTH_EMA = 0.001
 
     def __init__(self) -> None:
         super().__init__()
@@ -51,6 +61,9 @@ class ImbalanceMMStrategy(BaseStrategy):
         # order_id -> [sign, price, remaining]
         self.orders: dict[str, list] = {}
         self.cancel_sent: set[str] = set()
+        self.flow = 0.0          # signed aggressive volume, fading over FLOW_TAU_US
+        self.flow_t = 0
+        self.depth = 0.0         # running average touch size
 
     def _cancel(self, oid: str) -> None:
         if oid not in self.cancel_sent:
@@ -82,13 +95,29 @@ class ImbalanceMMStrategy(BaseStrategy):
             return
 
         fair = (bb + ba) / 2 + self.K_IMB * (bq - aq) / (bq + aq) - self.K_INV * self.inv
+        if self.K_FLOW:
+            now = snapshot.timestamp_us
+            self.flow *= math.exp((self.flow_t - now) / self.FLOW_TAU_US)
+            self.flow_t = now
+            for tr in trades:
+                if tr.taker_owner == 'market':
+                    self.flow += tr.quantity if tr.book_side == 'ask' else -tr.quantity
+            half = (bq + aq) / 2
+            self.depth = half if self.depth == 0 else self.depth + self.DEPTH_EMA * (half - self.depth)
+            fair += self.K_FLOW * self.flow / self.depth
 
-        pb = min(bb + 1, ba - 1)
-        while fair - pb < self.EDGE:
-            pb -= 1
-        pa = max(ba - 1, bb + 1)
-        while pa - fair < self.EDGE:
-            pa += 1
+        if ba - bb >= 2 and fair - (bb + 1) >= self.EDGE_IN:
+            pb = bb + 1
+        else:
+            pb = bb
+            while fair - pb < self.EDGE:
+                pb -= 1
+        if ba - bb >= 2 and (ba - 1) - fair >= self.EDGE_IN:
+            pa = ba - 1
+        else:
+            pa = ba
+            while pa - fair < self.EDGE:
+                pa += 1
         self._side(1, pb)
         self._side(-1, pa)
 

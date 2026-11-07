@@ -70,6 +70,18 @@ Analysis scripts: `scripts/record_book.py` (replays a tape through the engine an
 - Best strategy: **market making** (rows 2, 3 and 4 above). `strategies/imbalance_mm.py` makes **276,307**.
 - `flow_momentum.py` loses 3,049,276 here.
 
+### `data/round1.csv` (first scored round, 200 min, 4.4M rows)
+
+- Like v2 but tighter: spread is 1 tick 93% of the time. About 900 lots at the best price; orders live about 0.34 s (median).
+- About 8 IOCs per second, about 1,290 lots per second, balanced.
+- **Big aggressors are informed, small ones are not.** Resting fills, 5 s later, by aggressor size: under 18 lots +0.44, 18–42 +0.37, 42–85 +0.35, 85–192 +0.26, over 192 lots −0.06 ticks per lot. The average is only +0.06, which made the first diagnostic say "UNCLEAR".
+- A big aggressive order keeps moving the price: about +0.2 ticks within 5 ms, +0.3 by 100 ms and +0.6 by 1 s for orders over 192 lots.
+- Fills when the spread is 2 ticks earn about +0.54, but quoting *inside* the spread lost money (as on v2).
+- Signals: touch imbalance (Spearman 0.26 at 1 s) and aggressive flow over the last second (0.19) are the best; past returns and technical indicators are near 0.
+- Ceiling from the analysis report (perfect hindsight): **1.39M**, almost all of it from resting orders (1.35M).
+- Best strategy: **market making with a flow term** in the fair price. `imbalance_mm.py` makes **468,499**, about 34% of the ceiling.
+- `adaptive_mm.py` makes 195,037; `flow_momentum.py` loses 5,142,910.
+
 ## 3. Our strategies
 
 ### `strategies/flow_momentum.py` (built for the first sample)
@@ -83,10 +95,10 @@ Lessons:
 - Each price level sees only one market order of about 25 lots as the price walks past, which limits both entry and exit size.
 - Holding the full position to the top of the move beat selling early. Trailing stops, a stall exit and 1-tick ladders all did worse.
 
-### `strategies/imbalance_mm.py` (built for v2, the current choice)
+### `strategies/imbalance_mm.py` (the current choice)
 
-1. **Fair price** = mid + `K_IMB` × imbalance − `K_INV` × inventory.
-2. **Bid:** the highest price ≤ best bid + 1 (inside the spread when it's 2+ ticks wide) with fair − price ≥ `EDGE`. The ask mirrors it.
+1. **Fair price** = mid + `K_IMB` × imbalance + `K_FLOW` × flow / depth − `K_INV` × inventory. Flow is signed aggressive volume fading over `FLOW_TAU_US` (0.2 s); depth is the average size at the best price.
+2. **Bid:** the highest price ≤ best bid with fair − price ≥ `EDGE`. Inside a 2-tick spread only if fair − price ≥ `EDGE_IN` (kept at 0.5, which in practice means never). The ask mirrors it.
 3. **Keep queue position:** orders that end up `KEEP_LEVELS` behind the target price keep resting.
 4. **Size:** each side rests as much as fits without inventory leaving ±`MAX_POS`.
 
@@ -103,9 +115,23 @@ How it improved:
 - PnL is 44–47k in every 16-minute slice.
 - Inventory sits at ±100 most of the time. That's legal, since only above 100 is penalised. `MAX_POS = 95` costs about 8k.
 
+Round 1 re-tune (current settings: `EDGE` 0.4, `K_FLOW` 0.5, `FLOW_TAU_US` 200,000, `K_IMB` 0.3, `K_INV` 0.002):
+
+| Version | round 1 | round 1, 1st half | round 1, 2nd half | v2 | sample |
+|---|---|---|---|---|---|
+| v2 settings, no flow term | 347,799 | 167,407 | 180,392 | 276,307 | −10,518 |
+| Add flow term (`K_FLOW` 0.25, 1 s) | 412,647 | | | | |
+| Shorter flow memory (0.2 s), `EDGE` 0.4 | **468,499** | **228,527** | **240,057** | 251,092 | −2,488 |
+
+- Sweeping each half separately ranks the settings in the same order (best on both: `EDGE` 0.35–0.4, `K_FLOW` 0.5), so the gain is not overfitting.
+- `EDGE` 0.35 scored higher (up to 498k) but was uneven across `K_INV`; 0.4 sits in the stable part.
+- Quoting inside the spread (`EDGE_IN` < 0.5) lost money at every setting.
+- PnL is 54–61k in every 25-minute slice and never goes below 0.
+
 ## 4. Ideas not yet tried
 
 - **Switch strategy by market type.** Measure how far the mid moves in the 2–3 s after IOCs. If it moves a lot, follow the flow; if not, market-make. That would handle both samples.
-- **Better fair price.** Include deeper levels, or the imbalance of recent IOC flow.
+- **Better fair price.** Include deeper levels. (Recent aggressive flow is now in, as `K_FLOW`.)
+- **Queue position.** Back-of-queue orders mostly fill when a big order empties the level, which is the bad case. Pulling orders that are deep in a long queue when the opposite side is building could avoid those fills.
 - **Get back to flat at zero edge** when inventory is pinned at ±100, so both sides can quote again.
 - **End of round:** flatten near the end to avoid paying the spread on leftover inventory. We don't know the round length, so we would need a time guess or a rule that only uses the recent past.

@@ -11,7 +11,7 @@ Maker leg (the money on round 1): quotes passively around a fair price.
 - Orders are as large as the position cap allows. An order the target moves a tick away from is
   kept rather than re-sent, and the deepest kept order is cancelled when room is needed. An order
   the target moves *behind* is also kept while it has KEEP_EDGE (0.25) of edge left, so a small
-  dip in fair does not throw away its queue place (joining still needs EDGE, 0.3).
+  dip in fair does not throw away its queue place (joining still needs EDGE, 0.4).
 
 Taker leg (safety, idle on round 1): holds a directional position when order flow imbalance (OFI,
 Cont, Kukanov & Stoikov) predicts a move, but only while a paper-traded 1-lot shadow copy of it is
@@ -86,7 +86,7 @@ HP_MIN_WEIGHT = 100.0  # samples needed before the term is used at all
 # Maker
 MAKE_ENABLED = True
 QUOTE_SIZE = 200  # lots wanted at the target price (capped by the risk room)
-EDGE = 0.3  # min ticks between a passive quote and fair
+EDGE = 0.4  # min ticks between a passive quote and fair (0.3 on round 1 alone; 0.4 holds up better in harder markets)
 EDGE_IN = 0.5  # min ticks of edge to quote inside a 2+ tick spread
 EDGE_TAKE = 0.25  # cross (bid at the best ask) when fair is at least this far through it
 LADDER_LEVELS = 2  # an order the target moves away from is kept up to LADDER_LEVELS - 1 ticks behind it

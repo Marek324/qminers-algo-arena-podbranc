@@ -27,9 +27,24 @@ manual actions on the site, done by a human (AGENTS.md).
    token into a file in the repo or paste it into a commit, doc or chat.
 3. Restart Claude Code in the repo and approve the `arena` server.
 
-The token lasts about a week. A 401 error means it expired: copy a fresh one. If the MCP tools are not loaded, the
-same functions can be called directly:
-`ARENA_TOKEN=... uv run --with mcp python -c "import sys; sys.path.insert(0, 'scripts'); import arena_mcp as A; print(A.arena_leaderboard('Round 1'))"`.
+The token lasts about a week. If the MCP tools are not loaded, the same functions can be called directly:
+`uv run --with mcp python -c "import sys; sys.path.insert(0, 'scripts'); import arena_mcp as A; print(A.arena_me())"`.
+
+## Troubleshooting
+
+The MCP client hides the server's error and shows only "Error executing tool". To see the real error, run the
+direct call above in a shell that has `ARENA_TOKEN` set.
+
+- **`ARENA_TOKEN is not set`**: the variable was not exported in the shell that started Claude Code. Export it,
+  then restart Claude Code (or reconnect `arena` in `/mcp`).
+- **401**: the token expired. Copy a fresh one and reconnect.
+- **400 Bad Request (an nginx HTML page)**: the auth header is malformed. The server already removes whitespace
+  from a wrapped paste, so check that the value is the bare token (no `Bearer ` prefix, no extra quotes).
+- **403 "leaderboard ... hasn't been published"**: normal for the active round. Pass a finished round, e.g.
+  `round_name="Round 1"`.
+- **Not using Claude Code** (Codex, Copilot, ...): `.mcp.json` is Claude Code's format. Register the same command
+  (`uv run --with mcp python scripts/arena_mcp.py`, with `ARENA_TOKEN` in its environment) in that tool's MCP config,
+  or use the direct call above.
 
 ## How to read the results
 

@@ -4,7 +4,7 @@
       "command": "uv",
       "args": ["run", "--with", "mcp", "python", "scripts/arena_mcp.py"],
       "env": {
-        "ARENA_TOKEN": "${ARENA_TOKEN}"
+        "ARENA_TOKEN": "${ARENA_TOKEN:-}"
       }
     }
   }

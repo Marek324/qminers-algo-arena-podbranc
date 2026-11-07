@@ -180,8 +180,10 @@ if (!w.__middlePan) {
     const drag = e.target.closest && e.target.closest('.nsewdrag');
     if (!drag) return;
     e.preventDefault(); e.stopImmediatePropagation();
+    const gd = drag.closest('.js-plotly-plot');
+    const inPan = gd && gd._fullLayout && gd._fullLayout.dragmode === 'pan';  // Shift flips pan to zoom, so only add it when not panning already
     const ev = new w.MouseEvent('mousedown', {bubbles: true, cancelable: true, view: w, clientX: e.clientX, clientY: e.clientY,
-      screenX: e.screenX, screenY: e.screenY, button: 0, buttons: 1, shiftKey: true});
+      screenX: e.screenX, screenY: e.screenY, button: 0, buttons: 1, shiftKey: !inPan});
     ev.__synthetic = true;
     drag.dispatchEvent(ev);
   }, true);
@@ -218,6 +220,18 @@ def main_fig(r: engine.Replay, mid: np.ndarray, x0: float, x1: float, t: float, 
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.72, 0.28], vertical_spacing=0.02)
 
     centres = base + (np.arange(nb) + 0.5) * bw
+    # per-slot trade and event stats, shared by the candle and volume hovers
+    k_ = np.clip(((ta[a:b] - base) // bw).astype(int), 0, nb - 1)
+    side_, qty_ = r.t_side[a:b], r.t_qty[a:b]
+    buy = np.bincount(k_[side_ == 0], weights=qty_[side_ == 0], minlength=nb)
+    sell = np.bincount(k_[side_ == 1], weights=qty_[side_ == 1], minlength=nb)
+    ntr = np.bincount(k_, minlength=nb)
+    ev_edges = np.searchsorted(tm, base + np.arange(nb + 1) * bw, side='left')
+    nev = np.diff(ev_edges)
+
+    def slot(k: int) -> str:
+        return f'{fmt_t(base + k * bw, hrs)} → {fmt_t(base + (k + 1) * bw, hrs)}'
+
     # candles
     if cand_src == 'Mid':
         y = mid[i0:i1]
@@ -238,7 +252,11 @@ def main_fig(r: engine.Replay, mid: np.ndarray, x0: float, x1: float, t: float, 
             bins = np.nonzero(keep)[0]
             o, h, l, c = (np.where(has, v[src_i], c[src_i]) for v in (o, h, l, c))
         ymin, ymax = float(l.min()), float(h.max())
-        text = [f'{fmt_t(base + k * bw, hrs)}<br>O {p:,.1f}  H {q:,.1f}<br>L {u:,.1f}  C {v:,.1f}' for k, p, q, u, v in zip(bins, o, h, l, c)]
+        what = 'mid price' if cand_src == 'Mid' else 'trade price'
+        text = [f'<b>{slot(k)}</b>  ({what})<br>open {p:,.1f}   high {q:,.1f}<br>low {u:,.1f}   close {v:,.1f}<br>'
+                f'change {v - p:+,.1f} ({100 * (v - p) / p:+.3f}%)   range {q - u:,.1f}<br>'
+                f'trades {ntr[k]:,}   volume {int(buy[k] + sell[k]):,} (buy {int(buy[k]):,} / sell {int(sell[k]):,})<br>tape events {nev[k]:,}'
+                for k, p, q, u, v in zip(bins, o, h, l, c)]
         # An invisible candle in every slot pins the candle width to the slot width, even when trade candles leave gaps.
         fig.add_trace(go.Candlestick(x=ts(centres), open=np.full(nb, c[0]), high=np.full(nb, c[0]), low=np.full(nb, c[0]), close=np.full(nb, c[0]),
                                      opacity=0, hoverinfo='skip', showlegend=False, name='grid'), row=1, col=1)
@@ -258,7 +276,7 @@ def main_fig(r: engine.Replay, mid: np.ndarray, x0: float, x1: float, t: float, 
                 xx, yy = np.repeat(xx[idx], 2), np.column_stack([np.fmin.reduceat(yy, idx), np.fmax.reduceat(yy, idx)]).ravel()
                 shape = 'linear'
             fig.add_trace(go.Scatter(x=ts(xx), y=yy, mode='lines', name=name, opacity=0.4, line=dict(color=color, width=1, shape=shape),
-                                     hoverinfo='skip'), row=1, col=1)
+                                     hovertemplate='%{x}<br>' + name + ' %{y:,}<extra></extra>'), row=1, col=1)
 
     # trade markers
     sel = np.arange(a, b)
@@ -278,28 +296,27 @@ def main_fig(r: engine.Replay, mid: np.ndarray, x0: float, x1: float, t: float, 
             fig.add_trace(go.Scatter(
                 x=ts(ta[s]), y=pr[m] + (-off if side == 0 else off), mode='markers', name=nm,
                 marker=dict(symbol=sym, color=col, size=np.clip(5 + 1.2 * np.sqrt(q), 6, 14), line=dict(width=1.2, color=col)),
-                customdata=np.column_stack([[fmt_t(v, hrs) for v in ta[s]], r.t_price[s], q]),
-                hovertemplate='%{customdata[0]}<br>price %{customdata[1]:,}  qty %{customdata[2]:,}<extra>' + nm + '</extra>'), row=1, col=1)
+                customdata=np.column_stack([[fmt_t(v, hrs) for v in ta[s]], r.t_price[s], q, r.t_ev[s], r.t_taker[s], r.t_maker[s]]),
+                hovertemplate='<b>Trade at %{customdata[0]}</b><br>' + nm + '<br>price %{customdata[1]:,}   qty %{customdata[2]:,} lots<br>'
+                              'taker order %{customdata[4]} → maker order %{customdata[5]}<br>tape event #%{customdata[3]:,}<extra></extra>'),
+                row=1, col=1)
 
     # volume bars (same bins as the candles)
-    k_ = np.clip(((ta[a:b] - base) // bw).astype(int), 0, nb - 1)
-    side_, qty_ = r.t_side[a:b], r.t_qty[a:b]
-    buy = np.bincount(k_[side_ == 0], weights=qty_[side_ == 0], minlength=nb)
-    sell = np.bincount(k_[side_ == 1], weights=qty_[side_ == 1], minlength=nb)
     nz = np.nonzero((buy > 0) | (sell > 0))[0]
     if len(nz):
         # Standard volume pane: one bar per candle slot, total traded lots, coloured by which side was more aggressive.
-        cd = np.column_stack([[fmt_t(base + k * bw, hrs) for k in nz], buy[nz], sell[nz], buy[nz] - sell[nz]])
+        cd = np.column_stack([[slot(k) for k in nz], buy[nz], sell[nz], buy[nz] - sell[nz], ntr[nz]])
         fig.add_trace(go.Bar(x=ts(centres[nz]), y=buy[nz] + sell[nz], width=bw * 1e3 * 0.8, name='Volume', showlegend=False, customdata=cd,
                              marker=dict(color=np.where(buy[nz] >= sell[nz], UP, DOWN), opacity=0.7, line_width=0),
-                             hovertemplate='%{customdata[0]}<br>volume %{y:,}<br>buy %{customdata[1]:,}  sell %{customdata[2]:,}  net %{customdata[3]:,}'
+                             hovertemplate='<b>%{customdata[0]}</b><br>volume %{y:,} lots in %{customdata[4]} trades<br>'
+                                           'buy aggressor %{customdata[1]:,}   sell aggressor %{customdata[2]:,}<br>net %{customdata[3]:+,}'
                                            '<extra></extra>'), row=2, col=1)
 
     style_time_axes(fig, hrs)
     fig.update_xaxes(range=[ts1(x0), ts1(x1)], rangeslider_visible=False, **SPIKE)
     fig.update_yaxes(side='right', tickformat=',.2~f', **SPIKE, row=1, col=1)
     fig.update_yaxes(side='right', rangemode='tozero', tickformat=',~s', title_text='lots', row=2, col=1)
-    fig.update_layout(height=560, margin=dict(l=10, r=60, t=10, b=30), paper_bgcolor=CLEAR, plot_bgcolor=CLEAR, dragmode='zoom', bargap=0.2,
+    fig.update_layout(height=560, margin=dict(l=10, r=60, t=10, b=30), paper_bgcolor=CLEAR, plot_bgcolor=CLEAR, dragmode='pan', bargap=0.2,
                       hovermode='closest', hoverdistance=30, spikedistance=-1, uirevision=revision, shapes=cursor_shapes(t, x1),
                       legend=dict(orientation='h', y=1.0, x=0, yanchor='bottom', font_size=11))
     if capped:
@@ -311,7 +328,7 @@ def main_fig(r: engine.Replay, mid: np.ndarray, x0: float, x1: float, t: float, 
 def nav_fig(nx: np.ndarray, ny: np.ndarray, x0: float, x1: float, t: float, hrs: bool) -> go.Figure:
     fig = go.Figure(go.Scatter(x=ts(nx), y=ny, mode='lines+markers', line=dict(color='rgba(128,128,128,0.8)', width=1),
                                marker=dict(size=7, opacity=0), selected=dict(marker=dict(opacity=0)), unselected=dict(marker=dict(opacity=0)),
-                               hoverinfo='skip'))
+                               hovertemplate='%{x}<br>mid %{y:,.1f}<br>click to jump here<extra></extra>'))
     fig.update_layout(height=110, margin=dict(l=10, r=60, t=4, b=24), paper_bgcolor=CLEAR, plot_bgcolor=CLEAR, showlegend=False, uirevision='nav',
                       shapes=[dict(type='rect', xref='x', yref='paper', x0=ts1(x0), x1=ts1(x1), y0=0, y1=1, fillcolor='rgba(245,197,66,0.15)', line_width=0),
                               dict(type='line', xref='x', yref='paper', x0=ts1(t), x1=ts1(t), y0=0, y1=1, line=dict(color=ACCENT, width=1.5))])
@@ -518,13 +535,18 @@ def view(r: engine.Replay, source: str, opts: dict) -> None:
         st.slider('Time', t0, t1, key='tslider', step=max((t1 - t0) / 20000, 1e-6), format='%.3f', on_change=on_slider, label_visibility='collapsed')
 
     # ---- window + chart options
-    o = st.columns([3, 1.4, 1.2], vertical_alignment='center')
+    o = st.columns([2.6, 3.4, 1.3, 1.1], vertical_alignment='center')
     wlabel = o[0].segmented_control('Window', list(WINDOWS), default='5 min', key='window') or '5 min'
-    cand_src = o[1].segmented_control('Candles from', ['Mid', 'Trades'], default='Mid', key='candsrc') or 'Mid'
-    show_ba = o[2].toggle('Bid/ask lines', value=False, key='showba')
+    bin_label = o[1].segmented_control('Candle / volume aggregation', list(BIN_CHOICES), default='Auto', key='candlebin',
+                                       help='How much time each candle and volume bar covers. Auto picks one from the window.') or 'Auto'
+    cand_src = o[2].segmented_control('Candles from', ['Mid', 'Trades'], default='Mid', key='candsrc') or 'Mid'
+    show_ba = o[3].toggle('Bid/ask lines', value=False, key='showba')
     x0, x1 = window_range(t, WINDOWS[wlabel], t0, t1)
-    bw = opts['bin'] or AUTO_BIN[wlabel]
-    bw *= max(1, int(np.ceil((x1 - x0) / bw / 2000)))
+    bw = BIN_CHOICES[bin_label] or AUTO_BIN[wlabel]
+    grow = max(1, int(np.ceil((x1 - x0) / bw / 2000)))
+    if grow > 1:
+        bw *= grow
+        o[1].caption(f'{bin_label} would give too many candles here; using {bw:g} s')
 
     book = engine.book_at(r, pos)
     bids, asks = book.levels()
@@ -581,7 +603,6 @@ with st.sidebar:
     choice = st.selectbox('CSV in data/', files, format_func=lambda p: p.name) if files else None
     upload = st.file_uploader('...or upload a CSV', type='csv')
     with st.expander('Advanced', expanded=False):
-        bin_label = st.selectbox('Candle size', list(BIN_CHOICES), help='Auto picks a size from the window')
         levels = st.number_input('Ladder levels per side', 1, 40, 10)
         log_half = st.number_input('Event log rows each side', 3, 40, 12)
         st.number_input('Go to event #', 0, None, 0, key='goto', on_change=on_goto)
@@ -613,5 +634,5 @@ if tpe.time_fixed:
 if replay_.dups:
     st.warning(f'{replay_.dups} inserts reused a live order id (the simulator would raise).')
 
-options = dict(bin=BIN_CHOICES[bin_label], levels=int(levels), log_half=int(log_half), ids=ids)
+options = dict(levels=int(levels), log_half=int(log_half), ids=ids)
 st.fragment(view, run_every=0.8 if st.session_state.get('playing') else None)(replay_, source, options)

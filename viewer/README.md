@@ -10,12 +10,12 @@ Streamlit is added only through `--with`; project dependencies are unchanged. Pi
 
 ## Controls
 - **Transport bar:** play/pause, previous/next trade, step back/forward (step size 1 / 10 / 100 / 1k events), play speed (simulated seconds per real second), and the time slider. The big readout is the cursor time and event number.
-- **Window:** how much time the main chart shows (10 s ... All). The window trails the cursor (85 % past, 15 % future, the future is greyed). Candle size follows the window; override it under Advanced.
-- **Main chart:** candlesticks of the mid price (or of trade prices), optional best bid/ask lines, trade markers (triangle up = buy aggressor, down = sell; filled = IOC, hollow = limit; hidden when more than 300 trades are in view) and traded volume per candle (coloured by the more aggressive side). Scroll to zoom, left-drag to box-zoom, middle-drag to pan, double-click to reset. Zoom is kept while stepping or playing and resets when the window changes.
+- **Window:** how much time the main chart shows (10 s ... All). The window trails the cursor (85 % past, 15 % future, the future is greyed). **Candle / volume aggregation** sets how much time each candle and volume bar covers (Auto follows the window, or 100 ms ... 5 min).
+- **Main chart:** candlesticks of the mid price (or of trade prices), optional best bid/ask lines, trade markers (triangle up = buy aggressor, down = sell; filled = IOC, hollow = limit; hidden when more than 300 trades are in view) and traded volume per candle (coloured by the more aggressive side). Left- or middle-drag to pan, scroll to zoom, box-zoom from the toolbar, double-click to reset. Hover any candle, trade marker or volume bar for details (OHLC, change, trades and buy/sell volume in the slot; a trade's side, type, size and order ids). Zoom is kept while stepping or playing and resets when the window changes.
 - **Navigator:** the whole session's mid price; click a point to move the cursor there.
 - **Right panel:** best bid/ask, spread, last trade, and the order book ladder at the cursor.
 - **Tabs:** recent trades, the raw event log around the cursor (with the trades each row caused), depth chart, order-flow breakdown (Insert/Cancel, limit/IOC, buy/sell) and session totals.
-- **Advanced (sidebar):** candle size, ladder levels, log rows, go to event #, show order ids.
+- **Advanced (sidebar):** ladder levels, log rows, go to event #, show order ids.
 
 ## How trades are derived
 Trades are not in the CSV. `viewer/engine.py` replays the tape with the simulator's rules (price-time priority, fills at the resting order's price, limit residual rests, IOC residual dropped, unknown cancels ignored). The replay is cached and keeps a full-book checkpoint every few thousand events, so the book at any event is rebuilt quickly; a 3M-row file loads in a few seconds.

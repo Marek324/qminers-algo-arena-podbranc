@@ -7,6 +7,9 @@ Additions to strategies/hmm_mm.py (JPod's), each behind a switch:
   position), close the position with an IOC at the touch to free room for the next sweep (< 0: off).
 - CALM_SWEEP: in the quiet policy, when fair is CALM_SWEEP or more ticks through the opposite best, sweep every level
   up to fair - EDGE_TAKE instead of crossing at the best price only (0: off).
+- EDGE_PV (Cartea-Jaimungal style): quiet quotes keep EDGE + EDGE_PV * p_vol from fair, so they back off as the
+  volatile probability builds instead of all at once at P_ON (0: off).
+- ALPHA_PULL: quiet policy, when |fair - mid| > ALPHA_PULL the side the signal points against is not quoted (0: off).
 - OVER_POS: when the volatile fair is OVER_EDGE or more ticks through the stale book, the sweep may take inventory up
   to OVER_POS (> 100, the exchange charges 10,000 per second above 100). Once that side no longer has V_EDGE_TAKE of
   edge, any |inventory| above MAX_POS is closed by one IOC UNWIND_SLIP ticks through the touch.
@@ -82,6 +85,8 @@ class HmmMMPlusStrategy(BaseStrategy):
     UNWIND_SLIP = 1
     V_RECYCLE = -1.0     # close a volatile position by IOC once the touch is within this of fair (< 0: off)
     CALM_SWEEP = 0.0     # quiet policy: sweep stale levels when fair is this far through the best (0: off)
+    EDGE_PV = 0.0        # quiet quote edge grows by this times p_vol (0: off)
+    ALPHA_PULL = 0.0     # quiet policy: no quote against a signal stronger than this (0: off)
     # HMM
     H_N_Q0 = 1.0         # start mean of n (half ticks beyond the first) in the quiet state
     H_N_V0 = 2.7         # and in the volatile state
@@ -218,7 +223,8 @@ class HmmMMPlusStrategy(BaseStrategy):
                 pb = bb + 1
             else:
                 pb = bb
-                while fair - pb < self.EDGE:
+                edge = self.EDGE + self.EDGE_PV * self.pv
+                while fair - pb < edge:
                     pb -= 1
             if self.CALM_SWEEP and bb - fair >= self.CALM_SWEEP:
                 pa = math.ceil(fair + self.EDGE_TAKE)
@@ -228,10 +234,17 @@ class HmmMMPlusStrategy(BaseStrategy):
                 pa = ba - 1
             else:
                 pa = ba
-                while pa - fair < self.EDGE:
+                edge = self.EDGE + self.EDGE_PV * self.pv
+                while pa - fair < edge:
                     pa += 1
-            self._side(1, pb)
-            self._side(-1, pa)
+            if self.ALPHA_PULL and fair - mid > self.ALPHA_PULL and pa > bb:
+                self._clear(-1)  # signal up: do not offer
+            else:
+                self._side(-1, pa)
+            if self.ALPHA_PULL and mid - fair > self.ALPHA_PULL and pb < ba:
+                self._clear(1)   # signal down: do not bid
+            else:
+                self._side(1, pb)
             return
 
         fair = mid + self.V_K_S * (self.s - mid) + self.V_K_FLOW * fx - self.V_K_INV * self.inv

@@ -82,6 +82,7 @@ class GenParams:
     sigma_storm: float = 0.0
     jump_rate_storm: float = 0.0
     ioc_rate_storm: float = 0.0
+    life_storm_s: float = 0.0  # mean order life in a storm (0: life_mean_s everywhere)
     clamp: bool = False  # limit orders never cross the book
     cross_mode: str = 'clamp'  # with clamp: 'clamp' moves a crossing limit to one tick inside the opposite best, 'drop' skips it
     s0: float = 10000.0
@@ -200,6 +201,9 @@ def generate(p: GenParams, seed: int = 0, duration_s: float | None = None) -> tu
     lim_px = np.where(lim_side == 0, np.floor(S_lim - X), np.ceil(S_lim + X)).astype(np.int64)
     lim_qty = rng.choice(lim_sizes, n_lim)
     life = rng.exponential(p.life_mean_s, n_lim)
+    if p.storm_dur_s > 0 and p.life_storm_s > 0:
+        z_lim = states[np.clip(np.searchsorted(bounds, t_lim, 'right') - 1, 0, len(states) - 1)]
+        life = np.where(z_lim == 1, rng.exponential(p.life_storm_s, n_lim), life)
     offs = np.array(list(p.ioc_offset.keys()) or [0])
     probs = np.array(list(p.ioc_offset.values()) or [1.0])
     ioc_off = rng.choice(offs, n_ioc, p=probs / probs.sum())

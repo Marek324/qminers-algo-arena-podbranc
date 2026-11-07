@@ -855,3 +855,90 @@ volatile spells of about 1 s, against about 3 s from regime_mm's detector).
   only +1.5 / −2.2 ticks over the next second. Offline the far orders are a clean jump flag; online they cannot be
   told apart from non-trading IOCs.
 - With the jump-window oracle capped at about +85k and no clean online signal, jump detection is closed.
+
+## hmm_mm run on round2_public: where it earns and where it leaks (2026-11-07)
+
+Full-logs run `logs/r2-sample` (502,258), regime from hmm_mm's own P(volatile) ≥ 0.5 (16% of the time).
+
+| regime / fills | lots | 1 s | 5 s | 30 s | PnL at 5 s |
+|---|---|---|---|---|---|
+| volatile crosses | 176k | +1.33 | +1.41 | +1.48 | +250k |
+| quiet crosses | 210k | +0.54 | +0.69 | +0.24 | +144k |
+| quiet passive | 813k | +0.16 | +0.09 | +0.28 | +75k |
+| volatile passive | 2.5k | | | | +5k |
+
+- **Quiet passive by the size of the IOC that hit us:** up to 400 lots +181k; 400–1,000 lots −15k; over 1,000 lots
+  −88k (−1.12 ticks/lot, about the push 0.0159 · size^0.63 of such an order). The big sweeps are the main leak.
+  KEEP_LEVELS 0 (no resting one tick behind): 501,834; QTY 100: 474,571. Neither fixes it.
+- **Inventory:** |inv| ≥ 90 for 47% of quiet time and 87% of volatile time.
+- **Jumps net +30k.** Over the 22 moves of 20+ ticks, PnL from 1 s before to 5 s after is −4k when the jump ran
+  against our position and +34k when it ran with it. The two visible drops in the explorer (5,398 s and 5,569 s, about
+  −9k each) are up-jumps while short, recovered by the volatile sniping afterwards.
+- **Very steady:** every 300 s window is positive, the worst 30 s window is −11.5k, max drawdown 12.5k; PnL per 1,000 s
+  66k / 56k / 112k / 129k / 68k / 71k.
+- V_EDGE_TAKE 0.4 / 0.7: 501,110 / 491,321 (0.55 kept).
+
+### Fixing the big-sweep leak on hmm_mm: rejected (built as `strategies/hmm_mm_q.py`, since deleted)
+
+Quiet passive fills by market lots queued ahead of our order at the fill (5 s markout): 0 ahead 345k lots +0.18;
+1–50: 219k lots +0.20; 51–150: 132k lots +0.09; 151–300: 59k lots −0.26; 301–600: 35k lots −0.02; 601–1,000:
+12k lots −1.86; 1,000+: 5k lots −0.42. Up to 150 ahead: +117k; beyond: −41k.
+
+| change on hmm_mm (502,258) | pnl |
+|---|---|
+| cancel quiet passive orders with > 150 / > 600 market lots ahead | 393,176 / 458,220 |
+| don't join a price with > 400 market lots queued | 463,646 (with the 600 cancel: 462,176) |
+| KEEP_LEVELS 2 / 3 (rest further behind the touch) | 502,204 / 502,208 |
+| quiet EDGE 0.2 / 0.4 | 499,237 / 482,889 |
+
+A deep order moves up as the orders ahead of it are cancelled, and its later front-of-queue fills pay for the
+occasional big sweep. The leak is the price of queue position; hmm_mm's quoting is at a local optimum.
+
+### Filtering volatile crosses by the recent flow: rejected (built as `strategies/hmm_mm_xf.py` and `strategies/hmm_mm_v2_xf.py`, since deleted)
+
+Rule: a volatile-regime cross needs the recent aggressive flow on its side (sign · flow/depth > 0.1). In hmm_mm's
+crosses, those against the flow lost −2.2 ticks/lot after 5 s (−42k on 19k lots). On round2_public it added +24k to
+hmm_mm (526,287) and +16.5k to hmm_mm_v2 (532,026), better in 5 of 6 time chunks, mirrored market equal. On arena
+validation it did not hold up: hmm_mm_xf 1,288k against hmm_mm_v2's 1,291,224, and by the team's validation run the
+v2 version did not beat v2 either. A gain of about one public standard error did not survive the longer tape; hmm_mm_v2 stays the strategy.
+
+## Validation twin and tuning hmm_mm_v2 on it (2026-11-07)
+
+**Note:** the numbers below come from a first version of the twin (`scripts/gen_val_twin.py`, my own `s_path` code in
+analysis/generator.py). It was dropped when merging with the team's `scripts/path_twin.py` (commit 9c3593a), which
+does the same job with a better calibration: hmm_mm scores 0.92 of real on it (1,236,914 vs 1,290,784) against 1.13
+on the first version. Rerun the comparisons below on path_twin tapes before relying on them.
+
+**Twin (first version):** `scripts/gen_val_twin.py data/validation_r2/pnl.csv` turned the SimpleProbeMM run on the 12,000 s validation
+session (+10 lots held from t = 1 s, so mark = 10,001 + pnl / 10) into that session's 1 s price path and drives the
+generator's S through it (`generate(..., s_path=...)` in analysis/generator.py): the path's 1 s moves of 5+ ticks as
+jumps inside their second, a Brownian bridge in between, storms where the 30 s RMS of 1 s moves exceeds 3 ticks (43%
+of the time; the path has exactly the 51 moves of 20+ ticks the PnL analysis found), IOC pushes fading over 30 s.
+Order flow from `round2_drop_v2` (fitted on round2_public, kept on the team server in logs/generator/).
+
+| | twin seed 1 | twin seed 2 | real validation |
+|---|---|---|---|
+| SimpleProbeMM | 4,690 | | 4,800 |
+| hmm_mm_v2 | 1,449,169 | 1,473,686 | 1,291,224 |
+| hmm_mm | 1,465,549 | | 1,290,784 |
+| regime_mm | 962,104 | 906,828 | 1,032,909 |
+
+The price path is right (probe within 2%); hmm-family strategies come out about 13% high (the same optimism as
+synthetic public: +15%), regime_mm about 9% low.
+
+**Screen of hmm_mm_v2 on twin seed 1** (28 one-at-a-time variants): moves beyond ±12k only for K_FLOW 0.5 (+83k;
+1.2: −154k), K_INV 0.001 (+49k; 0.004: −249k), EDGE_TAKE 0.35 (+29k; 0.18: −52k), SIG_V 15 (+25k; 6: −91k).
+
+| change | twin seed 2 | real round2_public | generated public-like tape |
+|---|---|---|---|
+| K_FLOW 0.5 | +78k | −34k | +53k |
+| K_INV 0.001 | +53k | −13k | +19k |
+| EDGE_TAKE 0.35 | +23k | −6k | |
+| SIG_V 15 | +37k | −41k | +3k |
+| all four | +135k | −83k | +55k |
+
+**Reading:** the quiet-regime gains appear on any generated tape, path or not, and reverse on the real one. The
+generator's order flow does not reproduce how the real market responds to aggressive flow and inventory, so flow and
+inventory settings cannot be tuned on generated tapes. The twin is trustworthy for its price path (jump timing, storm
+share), not its order flow. No change to hmm_mm_v2. Next step for the twin: make the generated flow → price response
+match the real one (on round2_public a quiet flow weight of 0.8 beats 0.5), then repeat the screen.

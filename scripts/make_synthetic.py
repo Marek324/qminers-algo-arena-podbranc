@@ -7,7 +7,8 @@ usage:
 Two families of sessions:
   exact    the round1 parameters (logs/generator/round1_params.json): how a strategy does on a round1-like market
   random   each session draws its own parameters from ranges that cover sample_v2, round1 and somewhat beyond, so a
-           strategy cannot specialise to one setting (the next round will have different parameters)
+           strategy cannot specialise to one setting (the next round will have different parameters); 30% of them
+           have no push per IOC, like sample_v2
 
 Every session gets a seed of its own; train and validation never share seeds. Output in data/synthetic/ (git-ignored):
   <family>_<split>_<nnn>.csv     the tape, in the simulator's CSV format
@@ -39,19 +40,22 @@ OUT = ROOT / 'data' / 'synthetic'
 
 # parameter ranges for the randomized family (uniform unless noted)
 RANGES = {
-    'sigma_s': (0.4, 1.1),
-    'x_mean': (0.5, 1.0),
-    'x_std': (0.25, 0.5),
+    'sigma_s': (0.35, 1.1),
+    'x_mean': (0.5, 1.1),
+    'x_std': (0.15, 0.5),
     'limit_rate': (160.0, 200.0),
     'ioc_rate': (5.0, 10.0),
     'life_mean_s': (0.4, 0.8),
     'impact_k': (0.0, 0.015),
 }
+P_NO_IMPACT = 0.3  # share of randomized sessions without the push per IOC (sample_v2 has none)
 X_LOC = 0.05
 
 
 def random_params(base: GenParams, rng: np.random.Generator) -> GenParams:
     d = {k: float(rng.uniform(*v)) for k, v in RANGES.items()}
+    if rng.random() < P_NO_IMPACT:
+        d['impact_k'] = 0.0
     m = max(d['x_mean'] - X_LOC, 0.05)
     sizes = str(rng.choice(['round1', 'sample_v2']))
     return replace(

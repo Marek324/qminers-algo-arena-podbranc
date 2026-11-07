@@ -1,34 +1,38 @@
 """Adaptive market maker.
 
-Two legs share one short-horizon forecast:
+Maker leg (the money on round 1): quotes passively around a fair price.
+- Fair = mid, moved K_S of the way toward a hidden-price estimate, plus small terms for touch
+  imbalance, recent aggressive volume and inventory. The tape's limit orders are placed around a
+  hidden price that random-walks, and the visible mid lags it by about 0.5 s; the estimate is the
+  average of running means of newly arrived limit-order prices on each side. (Fair-value design
+  and hidden-price estimate from strategies/imbalance_mm.py.)
+- Quote prices: the best price that keeps at least EDGE ticks from fair; cross the spread when fair
+  is EDGE_TAKE beyond the opposite best price; inside a 2+ tick spread only with EDGE_IN of edge.
+- Orders are as large as the position cap allows. An order the target moves a tick away from is
+  kept rather than re-sent, and the deepest kept order is cancelled when room is needed.
 
-- Maker leg: passive orders at the market's best bid and ask, earning the spread. On round 1 (a
-  random walk above 1 s) this is where the money is. Orders are as large as the position cap
-  allows and only step back from the touch when the forecast, a lopsided touch queue or our
-  inventory clearly says so. When the touch moves a tick away, the order is kept one level behind
-  instead of being cancelled; touch moves often revert, and the kept order is then near the front
-  of the queue, where it is filled by small, profitable orders instead of only by the large sweeps
-  that reach the back.
-- Taker leg: holds a directional position when order flow predicts a move, crossing the spread
-  with IOC orders. It only trades while a paper-traded 1-lot shadow copy of it is making money,
-  so on tapes without momentum it stays off and the strategy is a pure market maker.
+Taker leg (safety, idle on round 1): holds a directional position when order flow imbalance (OFI,
+Cont, Kukanov & Stoikov) predicts a move, but only while a paper-traded 1-lot shadow copy of it is
+making money, so on tapes without momentum it stays off.
 
-Forecast: order flow imbalance (OFI, Cont, Kukanov & Stoikov) at the touch, decayed over about
-1 s and divided by the average touch size, giving an expected mid move in ticks.
+Risk: every order is sized so that even if all our open orders on one side fill, |inventory| stays
+within MAX_POS (the exchange penalty starts above 100). Inventory is counted from fills only, so a
+cancel that loses the race against a fill cannot put it out of sync. Our own orders are ignored
+when reading the book, so no signal reacts to us.
 
-Risk: every order is sized so that even if all our open orders on one side fill, |inventory|
-stays within MAX_POS (the exchange penalty starts above 100). Inventory is counted from fills
-only, so a cancel that loses the race against a fill cannot put it out of sync. Our own orders
-are ignored when reading the book, so no signal reacts to us.
+Hidden-price check: on tapes where orders are not placed around a hidden price, the estimate
+misleads the quotes (control tapes: about -84k per hour). So its weight is scaled by how well it
+has predicted the mid 0.5 s ahead over roughly the last 5 minutes, and drops to 0 when it hasn't.
+That cut the control-tape losses to -6k ... -24k with no cost on round 1.
 
 Run:  uv run exchange-simulator --strategy strategies/adaptive_mm.py --backtest data/round1.csv --log-dir logs/adaptive --no-logs
-Tune: python3 -I scripts/sweep.py strategies/adaptive_mm.py data/round1.csv -p INV_FREE=40,60,80
+Tune: python3 -I scripts/sweep.py strategies/adaptive_mm.py data/round1.csv -p EDGE=0.25,0.3,0.35
 Experiment history: docs/RESEARCH.md.
 """
-
 from __future__ import annotations
 
 import math
+from collections import deque
 
 from simulator.models import (
     OrderBookSnapshot,
@@ -59,17 +63,35 @@ EDGE_TAU_US = 300_000_000  # decay of the shadow's PnL (about the last 5 minutes
 EDGE_FULL = 60.0  # shadow PnL (ticks per lot) needed for full TAKE_POS
 LATENCY_US = 5_000  # exchange latency, applied to the shadow
 
+# Fair value (maker)
+K_S = 0.75  # fair moves this share of the way from the mid to the hidden-price estimate
+S_ALPHA = 0.1  # weight of each newly arrived limit order in its side's running price average
+S_LEVELS = 2  # new orders count up to this many ticks behind the best price
+K_IMB = 0.15  # ticks of fair shift at full touch imbalance
+K_FLOW = 0.8  # ticks of fair shift per average touch size of recent aggressive volume
+FLOW_TAU_US = 100_000  # decay of the aggressive volume
+FLOW_DEPTH_EMA = 0.001  # per-event weight of the touch size that normalises the flow
+K_INV = 0.002  # ticks of fair shift per lot of inventory away from target
+
+# Hidden-price check: K_S is scaled by how well the estimate has recently predicted the mid
+HP_CHECK = True
+HP_HORIZON_US = 500_000  # the mid move the estimate is checked against
+HP_SAMPLE_US = 50_000  # one check sample per this much time
+HP_TAU_US = 300_000_000  # decay of the check's statistics (about the last 5 minutes)
+HP_CORR_FULL = 0.3  # correlation at which the full K_S is used; 0 or less turns the term off
+HP_MIN_WEIGHT = 100.0  # samples needed before the term is used at all
+
 # Maker
 MAKE_ENABLED = True
-QUOTE_SIZE = 120  # lots at the top level (capped by the risk room)
-BACKOFF_THRESHOLD = 2.0  # forecast ticks before the threatened quote steps back
-INV_FREE = 80  # lots away from target before the adding side steps back
-INV_STEP = 15  # lots per further tick of step-back
-IMB_GUARD = 0.7  # touch imbalance beyond which the quote it points against steps back a tick
-LADDER_LEVELS = 2  # an order the touch moves away from is kept up to LADDER_LEVELS - 1 ticks behind it
+QUOTE_SIZE = 200  # lots wanted at the target price (capped by the risk room)
+EDGE = 0.3  # min ticks between a passive quote and fair
+EDGE_IN = 0.5  # min ticks of edge to quote inside a 2+ tick spread
+EDGE_TAKE = 0.25  # cross (bid at the best ask) when fair is at least this far through it
+LADDER_LEVELS = 2  # an order the target moves away from is kept up to LADDER_LEVELS - 1 ticks behind it
+MIN_NEW = 10  # smallest new order worth sending
 
 # Risk
-MAX_POS = 99  # worst case |inventory| if every open order on one side fills
+MAX_POS = 100  # worst case |inventory| if every open order on one side fills (penalty only above 100)
 
 BUY = Side.BUY
 SELL = Side.SELL
@@ -109,6 +131,22 @@ class AdaptiveMarketMaker(BaseStrategy):
         self._ofi = 0.0
         self._avg_depth = 0.0
         self._last_ts = 0
+
+        self._flow = 0.0
+        self._flow_depth = 0.0
+        self._flow_ts = 0
+        self._s_bid = 0.0
+        self._s_ask = 0.0
+        self._max_id = ''
+        self._last_bids: list | None = None
+        self._last_asks: list | None = None
+        self._hp_pending: deque = deque()  # (ts, delta, mid) samples waiting for their horizon
+        self._hp_next = 0
+        self._hp_ts = 0
+        self._hp_sxy = 0.0
+        self._hp_sxx = 0.0
+        self._hp_syy = 0.0
+        self._hp_w = 0.0
 
         self._sh_pos = 0
         self._sh_cash = 0.0
@@ -236,49 +274,130 @@ class AdaptiveMarketMaker(BaseStrategy):
         if qty > 0:
             self._taker_id = self._send(side, price, qty, IOC)
 
-    def _desired_quotes(self, forecast: float, bid: int, bid_qty: int, ask: int, ask_qty: int) -> tuple[int, int]:
-        """Top quote price per side, starting from the market's touch; each rule can only step it back.
+    def _scan_new(self, views: list, sign: int) -> None:
+        """Fold market orders that arrived since the last scan into their side's running price average.
 
-        - Forecast: above BACKOFF_THRESHOLD the ask steps back ceil(forecast - threshold) ticks;
-          below -BACKOFF_THRESHOLD the bid does.
-        - Imbalance: when the touch queues are lopsided beyond IMB_GUARD (e.g. a much bigger bid queue,
-          so the price is likely to tick up), the quote on the other side steps back a tick unless it
-          unwinds inventory. A quote that is about to be run over is filled just before the move.
-        - Inventory: once more than INV_FREE lots long of the target, the bid steps back one tick per
-          INV_STEP lots beyond that (the ask when short). The side that unwinds stays at the touch.
-        Quotes never go inside the spread: on round 1 and sample_v2 that cut PnL by a third or more.
+        Order ids only grow, so a market order id above the highest one seen so far is new. Only orders
+        within S_LEVELS ticks of the best price count (sign: -1 bids, +1 asks).
         """
-        qbid = bid
-        qask = ask
-        if forecast > BACKOFF_THRESHOLD:
-            qask = ask + math.ceil(forecast - BACKOFF_THRESHOLD)
-        elif forecast < -BACKOFF_THRESHOLD:
-            qbid = bid - math.ceil(-forecast - BACKOFF_THRESHOLD)
+        first = views[0].price
+        top_id = self._max_id
+        for o in views:
+            if (o.price - first) * sign > S_LEVELS:
+                break
+            if o.owner != 'market':
+                continue
+            oid = o.order_id
+            if len(oid) > len(top_id) or (len(oid) == len(top_id) and oid > top_id):
+                if sign < 0:
+                    self._s_bid = o.price if not self._s_bid else self._s_bid + S_ALPHA * (o.price - self._s_bid)
+                else:
+                    self._s_ask = o.price if not self._s_ask else self._s_ask + S_ALPHA * (o.price - self._s_ask)
+                if len(oid) > len(self._max_id) or (len(oid) == len(self._max_id) and oid > self._max_id):
+                    self._max_id = oid
 
-        inv = self._inventory - self._target
-        imb = (bid_qty - ask_qty) / (bid_qty + ask_qty)
-        if imb > IMB_GUARD and inv <= 0:
-            qask = max(qask, ask + 1)
-        elif imb < -IMB_GUARD and inv >= 0:
-            qbid = min(qbid, bid - 1)
+    def _fair(self, snapshot: OrderBookSnapshot, trades: list[Trade], bid: int, bid_qty: int, ask: int, ask_qty: int) -> float:
+        """Fair price: the mid, moved toward the hidden price and by imbalance, aggressive flow and inventory.
 
-        if inv > INV_FREE:
-            qbid = min(qbid, bid - math.ceil((inv - INV_FREE) / INV_STEP))
-        elif inv < -INV_FREE:
-            qask = max(qask, ask + math.ceil((-inv - INV_FREE) / INV_STEP))
-        return qbid, qask
+        The tape's limit orders are placed around a hidden price S that random-walks; the visible mid
+        lags it by about 0.5 s. S is estimated as the average of the bid-side and ask-side running means
+        of newly arrived limit-order prices. Aggressive volume (buys +, sells -), fading over FLOW_TAU_US,
+        keeps moving the price for a fraction of a second after big IOCs.
+        """
+        mid = (bid + ask) / 2
+        fair = mid + K_IMB * (bid_qty - ask_qty) / (bid_qty + ask_qty) - K_INV * (self._inventory - self._target)
+        if K_S:
+            if snapshot.bids is not self._last_bids:
+                self._last_bids = snapshot.bids
+                self._scan_new(snapshot.bids, -1)
+            if snapshot.asks is not self._last_asks:
+                self._last_asks = snapshot.asks
+                self._scan_new(snapshot.asks, 1)
+            if self._s_bid and self._s_ask:
+                delta = (self._s_bid + self._s_ask) / 2 - mid
+                fair += K_S * self._hp_scale(snapshot.timestamp_us, delta, mid) * delta
+        if K_FLOW:
+            ts = snapshot.timestamp_us
+            self._flow *= math.exp((self._flow_ts - ts) / FLOW_TAU_US)
+            self._flow_ts = ts
+            for t in trades:
+                if t.taker_owner == 'market':
+                    self._flow += t.quantity if t.book_side == 'ask' else -t.quantity
+            half = (bid_qty + ask_qty) / 2
+            self._flow_depth = half if self._flow_depth == 0 else self._flow_depth + FLOW_DEPTH_EMA * (half - self._flow_depth)
+            fair += K_FLOW * self._flow / self._flow_depth
+        return fair
+
+    def _hp_scale(self, ts: int, delta: float, mid: float) -> float:
+        """Share of K_S to use, from how well delta = estimate - mid has predicted the mid recently.
+
+        Every HP_SAMPLE_US a (delta, mid) sample is stored; once HP_HORIZON_US has passed, it is paired
+        with the mid move since then. The correlation of delta with that move, over decayed sums
+        (about the last HP_TAU_US), sets the scale: 0 while it is <= 0 or there are too few samples,
+        1 from HP_CORR_FULL up. On tapes where orders are not placed around a hidden price, the
+        estimate does not predict the mid and the term switches itself off.
+        """
+        if not HP_CHECK:
+            return 1.0
+        if ts > self._hp_ts:
+            f = math.exp((self._hp_ts - ts) / HP_TAU_US)
+            self._hp_sxy *= f
+            self._hp_sxx *= f
+            self._hp_syy *= f
+            self._hp_w *= f
+            self._hp_ts = ts
+        pending = self._hp_pending
+        while pending and pending[0][0] + HP_HORIZON_US <= ts:
+            _, d0, m0 = pending.popleft()
+            y = mid - m0
+            self._hp_sxy += d0 * y
+            self._hp_sxx += d0 * d0
+            self._hp_syy += y * y
+            self._hp_w += 1.0
+        if ts >= self._hp_next:
+            pending.append((ts, delta, mid))
+            self._hp_next = ts + HP_SAMPLE_US
+        if self._hp_w < HP_MIN_WEIGHT or self._hp_sxy <= 0 or self._hp_syy <= 0:
+            return 0.0
+        corr = self._hp_sxy / math.sqrt(self._hp_sxx * self._hp_syy)
+        return min(1.0, corr / HP_CORR_FULL)
+
+    def _targets(self, fair: float, bid: int, ask: int) -> tuple[int, int]:
+        """Target price per side, from fair.
+
+        Bid: the best ask if fair is EDGE_TAKE or more above it (cross; the quotes unwind it later);
+        else one tick inside a 2+ tick spread if that still leaves EDGE_IN; otherwise the highest price
+        at or below the best bid that is at least EDGE below fair. The ask mirrors it.
+        """
+        if fair - ask >= EDGE_TAKE:
+            pb = ask
+        elif ask - bid >= 2 and fair - (bid + 1) >= EDGE_IN:
+            pb = bid + 1
+        else:
+            pb = bid
+            while fair - pb < EDGE:
+                pb -= 1
+        if bid - fair >= EDGE_TAKE:
+            pa = bid
+        elif ask - bid >= 2 and (ask - 1) - fair >= EDGE_IN:
+            pa = ask - 1
+        else:
+            pa = ask
+            while pa - fair < EDGE:
+                pa += 1
+        return pb, pa
 
     def _manage_ladder(self, side: Side, top: int | None) -> None:
-        """Keep one fresh order at `top`, and keep (never move) older orders up to LADDER_LEVELS - 1 ticks behind it.
+        """Hold QUOTE_SIZE at `top`, and keep (never move) older orders up to LADDER_LEVELS - 1 ticks behind it.
 
-        When the touch moves a tick away from a resting order, the order stays where it is instead of
-        being cancelled and re-sent at the back of the new queue. Touch moves often revert, and the kept
-        order is then near the front of its queue. Orders priced better than `top` (the market moved
-        away, or a step-back) or deeper than the band are cancelled; they count towards risk until the
-        cancel is confirmed. New orders only go to `top`, sized QUOTE_SIZE capped by the risk room.
+        When the target moves a tick away from a resting order, the order stays where it is and keeps
+        its queue place. Orders priced better than `top` or deeper than the band are cancelled; they
+        count towards risk until the cancel is confirmed. New size goes to `top`, capped by the risk
+        room; when there is no room, the deepest kept order is cancelled to make some.
         """
         step = -1 if side is BUY else 1
-        has_top = False
+        at_top = 0
+        kept = []
         for order_id, order in self._orders.items():
             if order[0] is not side or order[3] or order[4]:
                 continue
@@ -287,21 +406,29 @@ class AdaptiveMarketMaker(BaseStrategy):
                 self.cancel_order(order_id)
                 order[4] = True
             elif depth == 0:
-                has_top = True
-        if top is None or has_top or top <= 0:
+                at_top += order[2]
+            else:
+                kept.append((depth, order_id))
+        if top is None or top <= 0 or at_top >= QUOTE_SIZE:
             return
-        qty = min(QUOTE_SIZE, self._room(side))
-        if qty > 0:
+        room = self._room(side)
+        want = QUOTE_SIZE - at_top
+        if room < min(want, MIN_NEW) and kept:
+            kept.sort(reverse=True)
+            order_id = kept[0][1]
+            self.cancel_order(order_id)
+            self._orders[order_id][4] = True
+            return
+        qty = min(want, room)
+        if qty >= MIN_NEW:
             self._send(side, top, qty, LIMIT)
 
     def on_order_book_change(self, snapshot: OrderBookSnapshot, trades: list[Trade]) -> None:
         """Per market event: read the touch, settle the shadow's pending IOC, update the signals,
-        forecast, run the taker and the shadow, then place the quotes."""
+        forecast, run the taker and the shadow, then place the quotes around fair."""
         bid, bid_qty = _touch(snapshot.bids)
         ask, ask_qty = _touch(snapshot.asks)
         if bid is None or ask is None:
-            self._manage_ladder(BUY, None)
-            self._manage_ladder(SELL, None)
             return
         ts = snapshot.timestamp_us
         self._shadow_fill(ts)
@@ -311,9 +438,10 @@ class AdaptiveMarketMaker(BaseStrategy):
             self._run_taker(forecast, bid, ask)
             self._shadow_step(ts, bid, ask)
         if MAKE_ENABLED:
-            qbid, qask = self._desired_quotes(forecast, bid, bid_qty, ask, ask_qty)
-            self._manage_ladder(BUY, qbid)
-            self._manage_ladder(SELL, qask)
+            fair = self._fair(snapshot, trades, bid, bid_qty, ask, ask_qty)
+            pb, pa = self._targets(fair, bid, ask)
+            self._manage_ladder(BUY, pb)
+            self._manage_ladder(SELL, pa)
 
     def on_private_order_update(self, event: PrivateOrderEvent) -> None:
         """Update inventory from fills, and drop orders that are filled, cancelled or rejected."""

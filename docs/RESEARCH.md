@@ -322,3 +322,61 @@ Starting point: the 2-level ladder at 353,645.
 So today's +43% on round 1 does **not** carry over to sample_v2. The gains exploit round 1's own microstructure (1-tick spread, how the touch reverts). They will hold if the next rounds come from the same kind of tape, and will mostly be neutral, not harmful, if they don't.
 
 **Realistic numbers:** round 1 now sits at 385k, which is 28% of the 1.35M making-only ceiling. The tweaks above have plateaued around 380k – 392k. 400k+ needs a new mechanism (for example, better queue-position estimates per order, or a fair value that predicts which fills are adverse), not more tuning.
+
+## Learning from the colleague's imbalance_mm.py (615k on round 1)
+
+`strategies/imbalance_mm.py` (JPod101010) makes 615,583 on round 1 against our 385,561. Its basis is in `docs/DATA_ANALYSIS.md`:
+- The generator places limit orders around a **hidden fair price S** that random-walks, and the visible mid lags S by about 0.5 s.
+- An estimate Ŝ, the average of the bid-side and ask-side running means of newly arrived limit-order prices, explains 32% of the mid move 0.5 s ahead.
+
+**Their components, each switched off in turn** (round 1, base 615.6k):
+
+| Switched off | PnL | Change |
+|---|---|---|
+| hidden-price term `K_S` | 449.9k | −166k |
+| aggressive-flow term `K_FLOW` | 505.2k | −110k |
+| size 100 instead of 200 | 535.3k | −80k |
+| crossing when fair is through the best price | 553.2k | −62k |
+| imbalance term | 600.7k | −15k |
+| keeping orders a tick behind | 616.1k | 0 |
+
+Even without Ŝ their fair-value-plus-edge quoting (450k) beats our rule-based step-backs (386k).
+
+**Our maker is now rebuilt on that design** (fair value plus edge-based target prices). It reproduces 615,583 exactly. Tuning on top:
+
+| Change | Round 1 |
+|---|---|
+| passive edge 0.4 → 0.3 | 629.2k |
+| flow weight 0.5 → 0.8, fade 200 → 100 ms | **650.8k** |
+| imbalance 0 / 0.3, inventory weight 0.004 | 600k / 530k – 582k / 285k – 465k (worse) |
+| hidden-price averaging speed 0.05 / 0.2, weight 0.9 / 1.0 | all worse (380k – 592k) |
+| ladder 1 / 2 / 3 levels | 650.4k / 650.8k / 650.4k (no longer matters) |
+
+**Final: 650,844** (±10,070).
+- Full log: no penalty and no position-limit rejects. Maximum drawdown 552. PnL per half hour 96k – 101k throughout.
+- Inventory median 82, at the 100 cap at least 5% of the time, and it ends at 100.
+- **Neighbourhood check**, each setting nudged down and up (edge, take edge, flow weight and fade, hidden-price weight and speed, imbalance weight): 626k – 655k, i.e. −4% to +1%.
+- **Other tapes:**
+
+| | sample_v2 | null_1 | follow_1 |
+|---|---|---|---|
+| ours | 242.2k (previous version 209.1k) | −84.8k | −95.2k |
+| colleague's | 261.1k | −83.4k | −93.6k |
+
+The control-tape losses come from the hidden-price term (without it: −3k / −28k). On tapes where new orders are not placed around a hidden price, Ŝ misleads the quotes. An online check of whether Ŝ actually predicts the mid, scaling `K_S` toward 0 when it does not (like the taker's momentum check), would cap that risk.
+
+### Hidden-price check
+
+The hidden-price term is now weighted online:
+- Every 50 ms a sample (δ = Ŝ − mid, mid) is stored.
+- After 0.5 s it is paired with the mid move since then.
+- The correlation over decayed sums (memory `HP_TAU_US`) scales `K_S` linearly from 0 (correlation ≤ 0, or fewer than 100 samples) up to full at `HP_CORR_FULL`.
+
+| | round 1 | sample_v2 | null_1 | null_2 | follow_1 |
+|---|---|---|---|---|---|
+| no check | 650,844 | 242,211 | −84,782 | −83,769 | −95,168 |
+| check, full weight at correlation 0.3, 2 min memory | 650,558 | 242,079 | −13,300 | −8,205 | −28,013 |
+| **check, full weight at correlation 0.3, 5 min memory** (default) | **650,611** | — | −11,107 | −5,998 | −24,222 |
+| check, full weight at correlation 0.45 / 0.6 | 641k – 644k / 597k – 600k | | −5k – −9k | −6k – −7k | −25k – −27k |
+
+The check costs nothing on round 1 and removes most of the control-tape loss. What is left there (−6k to −24k) is about what the strategy loses without the hidden-price term at all (−3k / −28k), so it comes from the other parts.

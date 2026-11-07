@@ -33,6 +33,7 @@ Current tools:
 
 - `tools/volatility.py`: `RealizedVol` (online volatility in ticks/√s from ~1 s samples, fast warm-up).
 - `tools/markout.py`: `FillMarkout` (running per-lot markout of our own fills a fixed time later).
+- `tools/grid_price.py`: `HiddenPriceGrid` (Bayesian grid filter over the hidden price S and the quiet/volatile regime, exact floor/ceil order-placement likelihoods; lost to the Kalman on round 2).
 - `tools/kalman_price.py`: `HiddenPriceKalman` (1-D Kalman filter for the hidden price S from new limit-order prices, with jump inflation after big IOCs, online offset and noise, censored capped orders).
 
 ## No tests

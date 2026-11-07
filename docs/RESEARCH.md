@@ -729,3 +729,129 @@ QUEUE_KEEP (300) ahead.
   passive unwinds.
 - Every knob moved toward "off" as it was loosened, so these are not tuning misses. Round 2 rewards taking on a strong
   signal and holding; making is a cost centre here.
+
+## regime_mm on round 2: where the remaining PnL is (2026-11-07)
+
+regime_mm.py (team): 448,818 on round2_public (269k/h); validation 1,032,909 over 12,000 s (310k/h), so it generalises.
+`strategies/regime_mm_kf.py` adds the Kalman filter in the volatile regime: 469,844. Tuning its other knobs (take
+edges, S_ALPHA, passive or earlier exits, max hold) only lost.
+
+**PnL by regime** (full-logs run, regime switches recorded): quiet 79% of the time 228k (passive 752k lots at +0.11/lot
+after 5 s, crosses 159k lots at +0.78), volatile 21% of the time 221k (IOC snipes 171k lots at +1.37). Against the
+hindsight max per minute: quiet minutes 104k of 288k, mixed 213k of 808k, mostly-volatile 132k of 608k. PnL in the
+5–30 s around regime switches is positive on both sides, so switch timing is not a leak.
+
+**The estimate of S is the bottleneck.** regime_mm with S replaced by the real mid some time ahead (local cheat,
+`ORACLE_MID2` built from book_deltas; scratch only, never submittable):
+
+| S used | public PnL |
+|---|---|
+| current mid | 79k |
+| our Kalman / running averages | 470k |
+| mid 100 ms ahead | 888k |
+| mid 300 ms ahead | 1,021k (500 ms: 993k) |
+| mid 300 ms ahead, volatile regime only | 735k |
+
+**Correction (same day):** this overstates the value of estimating S. The lookahead curve (20 ms: 440k, 50 ms: 750k)
+shows our estimate is already worth about as much as knowing the mid 20 ms ahead; the rest comes from events inside
+the lookahead window (the next IOC sweep, new orders) that no estimate of S(t) can know. See the next section.
+
+## Estimating S on round 2: what was tried and what is left (2026-11-07)
+
+**Grid filter** (`tools/grid_price.py`, `strategies/regime_mm_grid.py`): exact Bayesian filter over (regime, S) with
+order offsets fitted per regime from IOC prices (quiet X gamma(0.854, loc 0.025, θ 0.655), mean 0.59; volatile
+gamma(0.384, loc 2.594, θ 2.903) from a two-part mixture, since 62% of the orders regime_mm labels volatile look quiet).
+It lost: 262k with the grid in both regimes, 324k in the volatile regime only, against 470k for regime_mm_kf. Its
+P(volatile) stayed about 0.10 inside volatile spells, so the volatile part of the model is wrong.
+
+**Each estimate against the mid move** (corr², 100 ms grid, regime from regime_mm):
+
+| estimate | quiet, 300 ms | volatile, 100 ms |
+|---|---|---|
+| s_hat (running means, top 2 levels) | 0.134 | 0.002 |
+| S2 (clamp-aware running mean, 8 levels) | 0.204 | **0.104** |
+| Kalman | **0.231** | 0.057 |
+| grid | 0.215 | 0.033 |
+
+**Oracle tests** (regime_mm_kf with the estimate replaced; local scratch copies only):
+
+| S used | public PnL |
+|---|---|
+| real mid now / +20 / +50 / +100 / +300 ms | 79k / 440k / 750k / 888k / 1,021k |
+| mid +300 ms only in the 2.5% of time around the 22 one-second moves of 20+ ticks (baseline 310k) | 395k |
+| mid +300 ms everywhere except those windows | 927k |
+| exact IOC prices (round(S ± 1)) fed to the Kalman as they arrive, no lookahead | 248k–377k (worse) |
+| the same, corrected for each IOC's own push | 155k–372k (worse) |
+
+**Information channels the simulator exposes:**
+1. New limit-order prices (used by every estimator). Clamped orders (one tick from the opposite best) are bounds.
+2. Trades with `taker_order_id`: per IOC, the deepest price swept bounds S (round(S ± 1) ≥ that price).
+3. Order ids come from one counter, so an id that never shows up (not a visible new order, not a trading IOC) is an
+   order placed beyond the 20 visible ticks or an IOC that did not trade. On the tape only 82 limit orders landed
+   beyond 20 ticks, 80 of them within [−1 s, +2 s] of a 20+ tick move: a near-perfect jump flag, but the first one
+   came anywhere from 17 ms before to 1.3 s after the mid started moving.
+4. IOC prices themselves are not visible. Even known exactly they predict the mid poorly (corr² 0.02–0.04 against
+   the Kalman's 0.12–0.24 on the same samples): S sits within about half a tick of the mid and the price is rounded
+   to a whole tick.
+5. Sizes, sides, cancel times and arrival times are independent of S in the generator.
+
+**Literature checked:** Bibinger, Hautsch & Ristig, "Jump detection in high-frequency order prices"
+([arXiv:2403.00819](https://arxiv.org/abs/2403.00819)): local maxima of bids and minima of asks reveal a jump sooner
+than the mid; in our tape that is the clamped orders piling up one tick from the opposite best. Robert & Rosenbaum's
+uncertainty-zones model (J. Financial Econometrics 2011) estimates the efficient price from when the traded price
+changes; our generator places orders around S directly, so the order-placement likelihood is the sharper source.
+Particle filters for latent order-book factors (Takada; Kyoto RIMS Kôkyûroku 1933) and IMM / regime-switching Kalman
+filters (Blom & Bar-Shalom; [arXiv:2402.08051](https://arxiv.org/pdf/2402.08051)) are the general forms of what the grid
+filter and regime_mm already do.
+
+**Reading:**
+- In the quiet regime (79% of the time) S is probably not worth estimating better: it behaves like round 1, where
+  imbalance_mm fed the true S on generated sessions scored no better than with Ŝ.
+- In the volatile regime every estimate is weak (corr² ≤ 0.10). S2 is the best and the Kalman runs the strategy best,
+  so the estimate that predicts best is not the one that trades best there either.
+- Most of the future-mid oracle's value is from the next few events, which cannot be estimated. A perfect estimate
+  of S(t) is worth something between 0 and the jump-window oracle's +85k plus part of the volatile oracle's gain; it
+  cannot be measured on the public tape because the true S is not in it.
+
+**Ranked options:**
+1. **Round 2 twin with the true S** (extend scripts/gen_tape.py with the two regimes, the volatile order offset and
+   jumps, fit to round2_public). The only way to measure what a perfect S is worth before building more estimators,
+   and it gives many sessions to tune on instead of one tape with ±23k noise. Largest decision value.
+2. **Fit the volatile regime properly**: joint MLE of the two-regime model (switch rates, X per regime, σ per regime)
+   with the forward filter, the two-regime version of scripts/x_fit_slice.py. Then the grid filter's regime
+   probability should work; the current fit came from a mislabelled mixture.
+3. **Jump onset detector** from clamped-order bursts (Bibinger-style bid maxima / ask minima) plus the
+   invisible-order id gap, to sweep the stale book earlier. Ceiling about +85k (jump-window oracle).
+4. Not worth more time: IOC-price reconstruction from sweeps (weak information), quiet-regime estimators (round 1
+   evidence), deep or ML price models (too slow per event, and nothing to train on).
+
+## Team round 2 strategies on round2_public, split by regime (2026-11-07)
+
+Regime labels from regime_mm's own detector; pnl.csv per second.
+
+| strategy | total | quiet | volatile |
+|---|---|---|---|
+| hmm_mm | **502,258** | **242,763** | **259,495** |
+| regime_mm | 448,818 | 228,115 | 220,703 |
+| adaptive_mm_r2 | 235,976 | 43,214 | 192,762 |
+| jump_mm | 220,583 | 165,875 | 54,708 |
+| lag_taker | −42,592 | 7,713 | −50,305 |
+
+hmm_mm is best in both regimes, so a hybrid of the best engine per regime is hmm_mm itself. The round 2 twin was
+dropped: one 6,000 s tape is too little data to fit regimes and jumps (an offline two-state EM on order offsets gave
+volatile spells of about 1 s, against about 3 s from regime_mm's detector).
+
+### Jump detector on hmm_mm: rejected (built as `strategies/hmm_mm_jump.py`, since deleted)
+
+| change on hmm_mm (502,258) | pnl |
+|---|---|
+| CENSOR: orders one tick from the opposite best are bounds only | 423,633 |
+| BOUND: a market IOC that swept to P proves S ≥ P − 1.5 | 505,747 (noise) |
+| BOUND + GAP_JUMP: id gap + one-sided clamp burst → S jumps 15 ticks past the touch | 415,135 |
+
+- At a 1-tick spread every buy joining the bid is "one tick from the ask", so censoring discards most information.
+- Id gaps online: 2,162 events (0.36/s), almost all IOCs that never traded, not the 82 far limit orders. Gap clusters
+  (≥ 3 in 500 ms) catch all 22 moves of 20+ ticks but raise 192 alarms; a one-sided clamp burst at a gap predicts
+  only +1.5 / −2.2 ticks over the next second. Offline the far orders are a clean jump flag; online they cannot be
+  told apart from non-trading IOCs.
+- With the jump-window oracle capped at about +85k and no clean online signal, jump detection is closed.

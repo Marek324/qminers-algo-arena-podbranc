@@ -1,0 +1,8 @@
+label,pnl,breach_penalty,gross_pnl,breach_seconds,cash,inventory,traded_volume,fills,abs_inventory_q50,abs_inventory_q68,abs_inventory_q95,abs_inventory_q997,delta_net,delta_gross,gross_covers_penalty
+tmp/sweep_l6votkgb/out0_0,678057.0,0.0,678057.0,0.0,-324843.0,100,2244754,29488,84,100,100,100,0.0,0.0,False
+tmp/sweep_l6votkgb/out1_0,678057.0,0.0,678057.0,0.0,678057.0,0,2244854,29489,84,100,100,100,0.0,0.0,False
+tmp/sweep_l6votkgb/out2_0,678057.0,0.0,678057.0,0.0,678057.0,0,2244854,29489,84,100,100,100,0.0,0.0,False
+tmp/sweep_l6votkgb/out3_0,677857.0,0.0,677857.0,0.0,677857.0,0,2244454,29487,84,100,100,100,-200.0,-200.0,False
+tmp/sweep_l6votkgb/out4_0,677742.0,0.0,677742.0,0.0,677742.0,0,2244024,29480,84,100,100,100,-315.0,-315.0,False
+tmp/sweep_l6votkgb/out5_0,675546.0,0.0,675546.0,0.0,675546.0,0,2238422,29410,84,100,100,100,-2511.0,-2511.0,False
+tmp/sweep_l6votkgb/out6_0,674343.0,0.0,674343.0,0.0,674343.0,0,2234312,29359,83,100,100,100,-3714.0,-3714.0,False

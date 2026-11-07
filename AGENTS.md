@@ -7,6 +7,7 @@ Qminers Algo Trade Arena hackathon. Our job is to write a **trading strategy**. 
 - `strategies/`: new strategy files. Copy `strategies/template_strategy.py` into a new file and work there.
 - `tools/`: reusable building blocks (regressions, estimators, ...) that get **copied** into strategy files. See [Tools](#tools).
 - `docs/`, `AGENTS.md`, and helper scripts for analysis or parameter sweeps (e.g. `scripts/`, notebooks). These never get submitted.
+- `experiments/`: inactive experiments preserved for later, with their analysis, strategies, helpers and result summaries kept together. `experiments/inventory/` is the archived inventory-penalty/endgame study: its results are historical round-1 evidence, not active recommendations; re-run it on the new dataset before reconsidering it.
 - `data/` and `logs/`: local data and backtest output. Both are git-ignored, so don't commit them.
 
 ## What you must not change

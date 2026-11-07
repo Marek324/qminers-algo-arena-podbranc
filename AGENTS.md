@@ -64,6 +64,7 @@ uv run backtest-explorer --log-dir logs/<run>    # needs a full-logs run
 ```
 
 - Analyze a tape before writing a strategy: `uv run analysis.py data/<file>.csv` writes `logs/analysis/<file>.json` and `.txt`. Report contents and schema: [docs/ANALYSIS.md](docs/ANALYSIS.md).
+- Check a strategy for overfitting before trusting its score: `uv run python scripts/robustness.py strategies/<mine>.py` runs it on every tape in data/, over time chunks, on a mirrored market and reshuffled sessions (`--sensitivity all` adds parameter nudges); the dashboard's Robustness tab shows the report.
 - The score is `pnl` in `logs/<run>/result.json`. Also check `breach_penalty` (should be 0) and the `abs_inventory_q*` quantiles.
 - `data/sample.csv` is synthetic and trends. The real rounds are recorded market data and look nothing like it, so don't tune to the sample.
 - Before submitting, check the file only uses allowed imports and builtins, then run a full backtest of that exact file.

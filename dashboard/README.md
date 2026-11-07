@@ -62,3 +62,21 @@ file by hand; **Reset** returns to the file's values. A constant computed from a
 Opens with a short overview: six key numbers, four verdict cards (market making, direction, regime, risks; green / orange / red), the session chart, and three small charts (maker markout, top predictors of the 5 s move, fill probability by order placement). Below it a switcher opens one detailed section at a time: **Market & book**, **Flow & execution**, **Signals** (book signals and technical indicators), **PnL bounds** (theoretical max and min) and **Data** (series explorer, raw report and downloads). Only the chosen section is drawn, so the page stays fast.
 
 The report comes from `logs/analysis/<file>.json` when that is newer than the CSV (written by `uv run analysis.py data/<file>.csv`); otherwise press **Run analysis**, which computes it (about 12 s per million rows) and saves it there. `docs/ANALYSIS.md` explains every number.
+
+## Robustness tab
+Is a strategy stable, or fitted to one session? `scripts/robustness.py` backtests it in the real simulator (scoring settings) on
+variants of **every tape in data/** (new files are picked up automatically, `.csv.gz` included) and the tab shows the report:
+
+- **Across tapes:** PnL, PnL per hour and share of each tape's theoretical max side by side.
+- **Over time:** each tape cut into chunks (default 6), each run from a cold start; PnL per hour per chunk.
+- **Regime dependence:** chunk PnL against the chunk's price drift and volatility (does it only earn in calm or in moving markets?).
+- **Side symmetry:** a mirror-image market (buys become sells, prices reflected). A side-symmetric strategy scores exactly the same;
+  a difference means its buy and sell logic differ.
+- **Bootstrap:** sessions rebuilt from random 60 s blocks of the tapes, as a PnL distribution (weakest test: block joins are artificial).
+- **Parameter sensitivity** (optional): each chosen constant at x0.5 ... x1.5 on both halves of every tape. A plateau is robust, a
+  spike is a lucky peak; the walk-forward table shows whether the variant that wins on the first half also wins on the second.
+
+Start a run from the tab (it uses the parameter values applied in the sidebar and runs in the background on all cores), or from the
+command line: `uv run python scripts/robustness.py strategies/<file>.py [--set NAME=VALUE] [--sensitivity all|A,B]`. Reports go to
+`logs/robustness/<strategy>.json`.
+

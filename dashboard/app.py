@@ -23,6 +23,7 @@ from plotly.subplots import make_subplots
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import analysis_tab  # noqa: E402
 import engine  # noqa: E402
+import robustness_tab  # noqa: E402
 import strategy_view  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -905,8 +906,10 @@ if replay_.dups:
     st.warning(f'{replay_.dups} inserts reused a live order id (the simulator would raise).')
 
 options = dict(levels=int(levels), log_half=int(log_half), ids=ids, run=strategy_run_, theo_max=theo_max)
-replay_tab, analysis_view = st.tabs(['Replay', 'Analysis'])
+replay_tab, analysis_view, robustness_view = st.tabs(['Replay', 'Analysis', 'Robustness'])
 with replay_tab:
     st.fragment(view, run_every=0.8 if st.session_state.get('playing') else None)(replay_, source, options)
 with analysis_view:
     analysis_tab.render(source, fname, csv_path, data)
+with robustness_view:
+    robustness_tab.render()

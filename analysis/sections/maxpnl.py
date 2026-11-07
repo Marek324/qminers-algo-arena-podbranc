@@ -183,3 +183,25 @@ def max_pnl_section(ctx: Context, curve_step_us: int) -> dict:
                      'theoretical_min': c_worst},
         },
     }
+
+
+def tape_bounds(path) -> dict:
+    """Theoretical max/min (and making/taking only) PnL for one tape file, without the rest of the report."""
+    from ..context import GRID_STEP_US
+    from ..context import Context as _Ctx
+    from ..replay import replay
+    from ..tape import load_tape
+
+    tape = load_tape(path)
+    rp = replay(tape, GRID_STEP_US)
+    ctx = _Ctx(tape=tape, rp=rp, series_step_us=US, bin_step_us=60 * US)
+    sec = max_pnl_section(ctx, 60 * US)
+    out = {k: sec[k]['pnl'] for k in ('theoretical_max', 'theoretical_min', 'making_only', 'taking_only')}
+    out['duration_s'] = ctx.duration_s
+    mid = ctx.mid_t[np.isfinite(ctx.mid_t)]
+    out['mid_change_ticks'] = float(mid[-1] - mid[0]) if len(mid) else None
+    m1 = ctx.mid_at(np.arange(ctx.t0, ctx.t1 + 1, US, dtype=np.int64))
+    r1 = np.diff(m1)
+    r1 = r1[np.isfinite(r1)]
+    out['vol_ticks_per_sqrt_s'] = float(r1.std()) if len(r1) > 2 else None
+    return out

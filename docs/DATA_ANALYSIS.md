@@ -1,6 +1,6 @@
 # Data analysis: how the tapes are generated
 
-Reverse-engineered from `data/sample.csv`, `data/sample_v2.csv` and `data/round1.csv` (2026-11-07). The full reports, scripts and online tools are in `findings/`, which is git-ignored.
+Reverse-engineered from `data/sample.csv`, `data/sample_v2.csv`, `data/round1.csv` and `data/round2_public.csv` (2026-11-07). The full reports, scripts and online tools are in `findings/`, which is git-ignored.
 
 ## TL;DR
 
@@ -15,15 +15,16 @@ Reverse-engineered from `data/sample.csv`, `data/sample_v2.csv` and `data/round1
 - **Main edge:**
   - The visible mid chases S with a half-life of about 200–260ms. You can estimate S from new limit orders and from trades that sweep past the best price.
   - The *side* of an IOC carries no information, but its *price* follows S. So when the book lags S, IOCs sweep one level deeper on the side S has moved toward.
+- **`round2_public` adds jumps.** Same engine, but S also jumps 30–100 ticks within a second about 6 times an hour. Between jumps it moves like `round1`. Passive fills now lose money after 1s. See [round2_public](#round2_public-same-engine-plus-jumps).
 - **Seed recovery:** no seed found among simple seeds yet. A larger sweep on HPC is pending review. See the seed-recovery section below.
 
 ## The tapes
 
-| | `sample.csv` | `sample_v2.csv` | `round1.csv` |
-|---|---|---|---|
-| Rows / duration | 53.8k / 3,600s | 2.0M / 5,750s | 4.41M / 12,000s |
-| Events/s | 15 | 348 | 368 |
-| Generator | Toy re-quoting loop | Engine A, params v2 | Engine A, params r1 |
+| | `sample.csv` | `sample_v2.csv` | `round1.csv` | `round2_public.csv` |
+|---|---|---|---|---|
+| Rows / duration | 53.8k / 3,600s | 2.0M / 5,750s | 4.41M / 12,000s | 2.19M / 6,000s |
+| Events/s | 15 | 348 | 368 | 366 |
+| Generator | Toy re-quoting loop | Engine A, params v2 | Engine A, params r1 | Engine A, params r2, **plus jumps in S** |
 
 **`sample.csv`** (very likely `scripts/make_null_tape.py`):
 - One bid and one ask, re-quoted every ~0.27s on a 1-second clock. The spread is always 2 ticks.
@@ -192,6 +193,42 @@ PnL is sensitive to κ: κ 0.0065 gives about 660–700k. An independent fit in 
 - If `round1` itself is the scored tape, the future is already in the file and a seed adds nothing.
 - Check the hackathon rules on exploiting the generator.
 
+## round2_public: same engine, plus jumps
+
+`data/round2_public.csv` (2026-11-07): 6,000s, 2.19M rows, the same CSV format. Fitted with `analysis.py` and `scripts/estimate_model.py`; details in `findings/reports/round2_check.md`.
+
+**Unchanged from `round1`:**
+- Poisson limit orders (178.3/s vs 179.8/s) and IOCs (8.9/s vs 8.0/s), side a fair coin.
+- Limit prices at floor(S − X) / ceil(S + X); IOCs priced from S (`ioc_mode` S).
+- Exponential cancel timer, mean 0.44s (vs 0.47s), and cancel rows still written for filled orders (76% of fills get one).
+- Sizes: median limit 14 lots, median IOC 60–61 lots.
+- Each IOC pushes S: 0.0159 · size^0.63 (vs 0.0107 · size^0.66 in the re-run fit).
+
+**New: S jumps.** The −311 tick fall over the tape (10000 → 9689.5) is not a trend; it comes from a few large jumps:
+- S is tracked here through IOC prices (buy − 1, sell + 1), as a median per second. Most minutes move 1.0–1.3 ticks/√s, about the same as `round1`.
+- On top of that there are 10 one-second moves of 30–100 ticks: +56, −32, +41, −55, −54, −92, −43, +47, +103.5, +99. That is about 6 an hour, in both directions.
+- The kurtosis of 1-second moves is 288, where a Gaussian walk gives 0. Volatility per 10-minute block ranges from 1.3 to 25 ticks/√s.
+- One σ can't describe this: `estimate_model.py` fits σ = 3.64, which averages the jumps into the diffusion, and the fit error is 43.7 against 8.6–15 on `round1`. Its spread share, impact and microprice predictability are all far off.
+- Rate, size distribution, speed of a jump and whether new limit orders reveal it before the touch moves: being measured (`findings/reports/round2_jumps.md`).
+
+**Resulting market:**
+
+| | `round1` | `round2_public` |
+|---|---|---|
+| Mid vol at 1s / 60s / 300s (ticks/√s) | 0.92 / 0.95 / 0.78 | 3.80 / 4.29 / 5.13 |
+| Spread = 1 / 2 / 3+ ticks | 93.0% / 6.9% / 0.1% | 83.9% / 11.6% / 4.5% |
+| Median size at the best price (bid / ask) | 901 / 900 | 686 / 714 |
+| IOCs one tick through / two or more through | 46% / 1% | 42% / 16% (up to 13 ticks) |
+| Maker markout at the fill / 1s / 60s (ticks/lot) | +0.68 / +0.07 / +0.04 | +0.83 / **−0.40** / **−0.49** |
+| Mid move 60s after an IOC, largest fifth by size | +0.60 | +1.72 |
+| Hindsight max per hour (combined / making / taking) | 417k / 405k / 145k | 1,023k / 981k / 519k |
+
+**Implications:**
+- Passive fills lose money after 1s on average, so the `round1` market makers can't be assumed to work as they are. The loss comes mostly from fills just before and during jumps, when resting orders at the old price are swept.
+- Holding 100 lots through a 50–100 tick jump costs 5–10k at once.
+- New limit orders are placed around S, so they should show a jump before the best bid and ask move. Detecting it from new orders, then pulling quotes on the side being run over or trading with the jump, is the main new edge. The hindsight max more than doubled.
+- Between jumps the market is close to `round1`, so the `round1` quoting logic is still the base.
+
 ## What this means for strategies
 
 1. **`round1` is almost always at a 1-tick spread (93%).** There is no 2-tick spread to step inside. Making means joining the touch queue, or resting one tick behind it.
@@ -206,7 +243,7 @@ PnL is sensitive to κ: κ 0.0065 gives about 660–700k. An independent fit in 
    - The cost of the back of the queue is fill rate: about 16% of joins fill, and under 7% with more than 1,500 lots ahead.
    - Re-check this on `round1`. Its IOCs sweep deeper and its sizes and cancel rates differ.
 6. **Queues turn over fast.** Touch orders live about 0.3s in `round1`. Ghost cancels mean you shouldn't count cancels as queue thinning; track the queue from snapshot quantities instead.
-7. **Plan for parameters to change between rounds.** v2 and r1 share the engine but differ in every rate and size parameter. Estimate them online (Ŝ half-life, vol, spread regime) instead of hard-coding v2 values.
+7. **Plan for parameters, and mechanisms, to change between rounds.** v2 and r1 share the engine but differ in every rate and size parameter, and `round2_public` adds jumps in S. Estimate them online (Ŝ half-life, vol, spread regime, jumps) instead of hard-coding values, and protect resting orders and inventory against jumps.
 8. **The `GeneratorFingerprint` detector needs reworking before use.** It scores `round1` at 0.65, below its 0.70 threshold, only because it expects U{20..40} sizes. Its other 4 components score 0.97 or higher.
 
 ## Caveats

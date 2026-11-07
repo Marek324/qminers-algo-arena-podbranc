@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import engine  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_FILE = 'sample_v2.csv'  # opened first when it is in data/ (unzip data/sample_v2.csv.gz)
 UP, DOWN, ACCENT = '#26a69a', '#ef5350', '#f5c542'
 GRID = 'rgba(128,128,128,0.15)'
 CLEAR = 'rgba(0,0,0,0)'
@@ -774,7 +775,9 @@ components.html(MIDDLE_PAN_JS, height=0)
 with st.sidebar:
     st.header('Data')
     files = sorted((ROOT / 'data').glob('*.csv'))
-    choice = st.selectbox('CSV in data/', files, format_func=lambda p: p.name) if files else None
+    names = [f.name for f in files]
+    choice = st.selectbox('CSV in data/', files, format_func=lambda p: p.name,
+                          index=names.index(DEFAULT_FILE) if DEFAULT_FILE in names else 0) if files else None
     upload = st.file_uploader('...or upload a CSV', type='csv')
     with st.expander('Advanced', expanded=False):
         levels = st.number_input('Order book rows per side', 1, 40, 10)

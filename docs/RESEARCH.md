@@ -64,14 +64,14 @@ The constraints that decide which papers matter:
 
 ## Findings so far (sample.csv only; it is synthetic and unlike the real rounds)
 
-Check any tape with `python3 -I scripts/imbalance_check.py data/<file>.csv [ofi_tau_ms]`.
+Signal quality on any tape now comes from the `analysis` package (`signals` section); the script used here has been removed.
 
 - **Touch imbalance is weak on the sample.** P(next mid move is up) only goes from 0.47 to 0.55 across deciles.
 - **Decayed OFI (500 ms) is strong.** P(up) goes from 0.16 to 0.87 across deciles.
 - **A strong signal does not help passive quotes.** An earlier pure market-making version (since removed; the maker leg of `adaptive_mm.py` replaces it) was allowed to improve inside the touch on a strong signal. Fills went from about 70 to over 2,000 and it lost up to −33k. The improved quote is filled first by the aggressive orders that then move the price against it, which is the Market Maker's Dilemma in practice. Used only to back quotes off, every setting landed between −1.5k and +0.3k, all within noise. That is why the maker leg never quotes inside the touch.
 - **The pull filter almost never triggered** at `PULL_RATIO = 1.0`.
 - **Takeaway:** on this tape the edge comes from *taking* in the direction of the predicted move (the trend follower makes +1,878), not from passive quoting. Re-check all of this on real round data before deciding.
-- **`strategies/adaptive_mm.py`** (first called merged.py) was tuned with `scripts/sweep.py` on the two halves of the sample (`scripts/split_tape.py`). Results:
+- **`strategies/adaptive_mm.py`** (first called merged.py) was tuned with `scripts/sweep.py` on the two halves of the sample (with a split script, since removed). Results:
   - Taker leg alone: about +10k at a 5-lot target. Maker leg alone: about 0. The maker adds nothing on top of the taker.
   - PnL grows roughly linearly with the target position: +12k at 5 lots, +40k at 20, +115k at 50, +175k at 80. That is what you'd expect from a trending synthetic tape, and it is **not** evidence for real rounds.
   - The imbalance term hurts as a taker signal (`IMB_WEIGHT` 3 → losses), so it is off.
@@ -80,7 +80,7 @@ Check any tape with `python3 -I scripts/imbalance_check.py data/<file>.csv [ofi_
 
 ## Overfitting check for adaptive_mm.py (2026-11-07)
 
-**Ceiling.** `scripts/oracle.py` computes a perfect-foresight taker that buys and sells only at the touch, with no latency, keeping |inventory| ≤ P.
+**Ceiling.** A perfect-foresight script (since removed; `analysis` has a `max_pnl` section that also covers making) computed a perfect-foresight taker that buys and sells only at the touch, with no latency, keeping |inventory| ≤ P.
 
 | Tape | Taker ceiling P=1 | Taker ceiling P=50 | adaptive_mm.py | trend_follower |
 |---|---|---|---|---|
@@ -113,7 +113,7 @@ The check settings sit on a flat region: `EDGE_FULL` 20 to 150 and a decay of 5 
 2M rows over 5,750 s, a dense book (touch about 820 lots per side), mean spread 1.58 ticks, and range-bound (9,965–10,023, ends +4).
 
 - **The signals predict direction but not enough size to take.** Touch imbalance is now the strongest signal (P(up) from 0.20 to 0.81 across deciles); OFI is weaker (0.30 to 0.70). But the mean move 1–5 s ahead in the extreme deciles is only about ±0.25–0.3 ticks, against a round-trip cost of about 1.6 ticks.
-- **Taker ceiling** (`oracle.py`): only 705 per lot over the whole tape, so 35k at ±50. Even perfect timing barely pays for crossing the spread.
+- **Taker ceiling** (perfect-foresight script, since removed): only 705 per lot over the whole tape, so 35k at ±50. Even perfect timing barely pays for crossing the spread.
 
 | Config on v2 (half 1 / half 2) | PnL |
 |---|---|
@@ -142,3 +142,183 @@ The check settings sit on a flat region: `EDGE_FULL` 20 to 150 and a decay of 5 
 5. **Only then** try taking liquidity, and only when the predicted move covers the spread.
 
 Check each step with a backtest (no unit tests, see AGENTS.md), and compare on more than `sample.csv` as soon as real round data is available.
+
+## Maker improvements from the sub-second findings (full sample_v2)
+
+Baseline: 125,470 (60-lot quotes, combined forecast and inventory skew with a 0.3-tick threshold).
+
+| Idea | Best result | Verdict |
+|---|---|---|
+| Re-quote delay (keep the old quote when the touch moves, since the bid gives back about half of each move), 50 ms – 1 s, two modes | 119k at 50 ms down to 60k at 1 s | worse: fewer fills |
+| Microprice term in the quote signal, weight −1 … +2 | 121k – 128k | no effect beyond noise (±2.2k); not adopted |
+| Quote one tick inside the spread when it is 2 ticks wide | 30k – 40k, with 2.3× the fills | badly picked off |
+| Inside the spread only when it is ≥ 3 ticks wide | ≈ baseline | too rare to matter |
+| Looser forecast step-back (one shared threshold 0.3 → 2.0 → none) | 140k → 188k | better, but inventory then sits at the cap |
+| **Separate forecast step-back (1.0 tick) and inventory step-back (free 30 lots, then 1 tick per 30)** | **168,093** (±3,248) | **adopted** |
+
+- **PnL tracks fill count**, at about +26 per passive fill. On this tape, rules that skip fills lose money even when the skipped fills look risky.
+- **The old shared threshold was far too tight.** One 60-lot fill pushed that side 6 ticks off the touch.
+- **Inventory free zone** (forecast step-back at 1.0, 30-lot steps), with the follow-through control tape as a risk check:
+
+| `INV_FREE` | v2 | `follow_1` | Note |
+|---|---|---|---|
+| 0 | 126k | −1.9k | |
+| 15 | 138k | −3.2k | |
+| **30** | **168k** | **−5.2k** | chosen |
+| 60 | 183k | −8.5k | |
+
+The free zone of 30 lots is a deliberate compromise between v2 PnL and loss on trending data. Cancels on v2 fell from 23k to 9k because the quotes move far less.
+
+## Round 1 (data/round1.csv, 2026-11-07)
+
+Tape statistics come from the existing `analysis` package (`uv run analysis.py data/round1.csv` → `logs/analysis/round1.txt`).
+
+**The tape:** 4.4M rows over 12,000 s (3.3 h), 368 rows/s.
+- **Spread:** 1 tick 93% of the time (mean 1.07; sample_v2: 1.58).
+- **Volatility:** about 0.92 ticks per √s, roughly twice sample_v2.
+- **Price:** a random walk from 1 s up (variance ratio 60 s / 1 s = 1.07, reversal share 46.3%, drift not significant).
+- **Imbalance:** touch imbalance is the best 1 s predictor (Spearman +0.26, hit rate 63%). A linear mix of book features reaches out-of-sample R² 0.11.
+
+**Ceilings** (perfect foresight, |inventory| ≤ 100, flat at the end):
+
+| | PnL |
+|---|---|
+| Theoretical max | 1,389,093 |
+| Making only | 1,350,883 |
+| Taking only | 483,450 |
+
+**adaptive_mm.py (defaults, untouched): +202,677** (±6,075).
+- That is 15% of the making-only ceiling. All of it comes from the maker; the momentum check kept the taker off.
+- PnL rises steadily: +27k to +33k every half hour, with a maximum drawdown of only 668.
+- It ends at +90 lots, the cap.
+
+| Variant | PnL |
+|---|---|
+| taker without momentum check | −157,341 |
+| trend_follower | −410 |
+| QUOTE_SIZE 30 / 60 (INV_FREE 15–30) | 131k–133k / 203k–207k |
+| QUOTE_SIZE 90, BACKOFF 2.0, INV_FREE 30 | 251,304 (not adopted yet: untested on sample_v2) |
+
+**Market maker markout** (all passive volume in the tape, ticks per lot, after 1 s):
+- at the touch: +0.03
+- one level deeper, filled only when an IOC sweeps through: **+0.33**
+- when the spread is 2 ticks: **+0.41**
+- fills of 46+ lots: about 0; fills under 46 lots: +0.23 to +0.26
+
+Large fills from big IOCs carry the adverse selection. That makes a second quote one tick behind the touch a candidate worth testing.
+
+### Round 1: more aggressive maker (tuned on round 1 only from here on)
+
+| Change | Round 1 PnL |
+|---|---|
+| Before (60-lot quotes, step-back 1.0, free 30 lots, cap 90) | 202,677 |
+| 120-lot quotes (in practice: as much as the cap allows) | 232k – 264k, depending on the rest |
+| Forecast step-back 1.0 → 2.0 → off | +5–8% (it rarely triggers at 2.0) |
+| Position cap 90 → 99 (still below the 100-lot penalty line) | +1–6% |
+| Inventory free zone 15 / 30 / **60** / 80 / 99 lots | 238k / 262k / **270k** / 267k / 262k |
+| Inventory step 30 vs 60 lots, pull filter on/off | within ±2k |
+
+**New defaults:** `QUOTE_SIZE = 120`, `BACKOFF_THRESHOLD = 2.0`, `INV_FREE = 60`, `MAX_POS = 99`.
+
+On round 1 that gives **270,439** (±8,469), up 33%. Full-log run: no penalty and no position-limit rejects. Inventory median is 47 and reaches 99 at least 5% of the time. Maximum drawdown is 796, and the run ends at +67 lots. Turning the forecast step-back off entirely gives 273.7k, within noise.
+
+## IMC Prosperity winners' techniques vs our exchange (2026-11-07)
+
+Sources:
+- [Frankfurt Hedgehogs, Prosperity 3 (2nd)](https://github.com/HendrikMS/imc-prosperity-3)
+- [Linear Utility, Prosperity 2 (2nd)](https://github.com/ericcccsliu/imc-prosperity-2)
+- [jmerle, Prosperity 2 (9th)](https://github.com/jmerle/imc-prosperity-2)
+
+Their single-product market making:
+
+1. **Fair value from the big passive participant.** Linear Utility: the "market maker mid" (a bot quoting 20–30 lots), which ignores a small 1–5 lot bot. Frankfurt: the "wall mid" (deep levels). jmerle: the price level with the most volume.
+2. **Take first, then penny-jump.** Take anything priced through fair, then post one tick better than the best quotes while keeping positive edge.
+3. **Clear inventory at zero edge.** Trade at fair to free position-limit capacity (Linear Utility: +3%), or force liquidation near the limit (jmerle).
+4. **Follow informed flow.** Frankfurt tracked one bot ("Olivia") that bought at daily lows and sold at highs, identified by its 15-lot size, then by trader ID.
+
+**Why they don't transfer one to one:** Prosperity runs in discrete snapshots with no latency and wipes all orders every step ("speed and order cancellation were irrelevant"). Ours is continuous, with 5 ms latency and price-time queues of about 900 lots at the touch (round 1 median; median taker order 60 lots).
+
+**Tested on round 1:**
+
+| Technique | Round 1 PnL |
+|---|---|
+| baseline | 270,439 |
+| penny-jump the side the forecast favours when the spread is ≥ 2 | 179,228 |
+| penny-jump both sides | 50,124 |
+
+Wide spreads last only about 23 ms (median), so a jump usually lands late or is picked off. The same was true on sample_v2.
+
+**Reading of the round 1 report:** the edge is in **queue position**.
+- At the back of a 900-lot queue, our quote is filled only by large sweeping orders, and fills of 46+ lots keep about 0 ticks after 1 s.
+- Fills one level behind the touch keep +0.33. Fills under 46 lots keep +0.23 to +0.26.
+- The making-only ceiling (1.35M) assumes a perfect queue position: first at new levels, or joining just after a level trades.
+
+**Next experiments, in priority order:**
+1. **Queue ladder.** Rest orders 1–2 ticks behind the touch and leave them there, so when the touch moves onto them they are near the front.
+2. **Zero-edge inventory clearing.** When the forecast already points toward the unwind side, cross to unwind; this frees the position cap, which binds at least 5% of the time.
+3. **Fair value from a size-filtered "wall mid"** instead of OFI alone. Needs a size breakdown of who is informed, ideally as a new `analysis/` section.
+
+The 700k target is about 50% of a perfect-foresight ceiling. Treat it as a stretch goal; the queue ladder is the one idea with a mechanism that could close a large part of the gap.
+
+### Queue ladder (round 1)
+
+Instead of one quote that is cancelled whenever the touch moves, keep resting orders on up to `LADDER_LEVELS` price levels per side, from the quote price outward. An order inside that band is never moved. When the touch steps a tick away, the order stays one level behind, and when the touch comes back it is near the front of the queue.
+
+| Variant | Round 1 PnL |
+|---|---|
+| one level (same as before; check) | 270,016 |
+| **2 levels, 120 lots each (capped by risk room)** | **353,645** (±7,781) |
+| 2 levels, top 120, second 40 / 80 | 342,464 / 345,278 |
+| 2 levels, top 60 / 90 | 304k – 311k / 336k – 347k |
+| 3 levels (sizes 20–120) | 266k – 292k |
+| 4 levels | 207k – 245k |
+| deeper levels get risk room first | 3–15% worse |
+| never send fresh orders to the top level (only keep ones the touch moved onto) | 69k – 124k |
+| 2 levels with inventory free zone 40 / 60 / 80 | 335.5k / 353.6k / 358.7k (80 within noise of 60; kept 60) |
+
+- **Result:** +31% over the single quote. More than two levels spreads the 99-lot position room too thin.
+- **Full-log run:** no penalty and no position-limit rejects. Maximum drawdown 529. PnL per half hour: 49k – 55k.
+
+### Zero-edge inventory clearing (round 1): rejected
+
+The idea comes from Linear Utility (Prosperity 2, +3%). Once inventory is more than `CLEAR_FROM` lots from the target, cross to unwind (sell at the bid or buy at the ask) whenever the microprice is within `CLEAR_EDGE` ticks of that price. One IOC is in flight at a time.
+
+| `CLEAR_FROM` | edge 0.1 | edge 0.25 | edge 0.4 |
+|---|---|---|---|
+| 30 | 340k | 304k – 314k | 269k – 284k |
+| 60 | 338k – 340k | 327k – 328k | 306k – 313k |
+| 90 | 349k | 346k | 341k |
+
+Every setting does worse than no clearing (353,645), and the more it clears, the worse the result. With a 1-tick spread, crossing costs more than the freed position room earns in extra passive fills. Linear Utility had wide spreads and a 20-lot limit, so the trade-off went the other way for them. Code removed.
+
+### Iterating on the opening research (round 1, 2026-11-07)
+
+Starting point: the 2-level ladder at 353,645.
+
+| Idea (source) | Result | Kept? |
+|---|---|---|
+| **Imbalance guard** (Gould & Bonart; Market Maker's Dilemma): when the touch imbalance is beyond ±0.7–0.85, step the quote it points against back a tick, unless it unwinds | 366k – 368k (0.5: 355k, 0.95: 361k). "No fresh order there" variant: 356k – 360k | **yes** (0.7) |
+| Join only short queues (queue position, Moallemi & Yuan): fresh top order only if the market queue is ≤ 300 / 600 / 1000 / 2000 lots | 318k / 342k / 357k / 372k | no |
+| Pull the side being swept by aggressive flow (Hawkes clustering) | off 367k, 0.5: 352k, 1.0: 368k, 2.0: 370k | no, removed |
+| Forecast (OFI) step-back threshold 1.0 / 1.5 / 2.0 / 3.0 | 347k / 362k / 368k / 372k | kept at 2.0 (safety; rarely triggers) |
+| **Second level only keeps orders the touch moved away from** (no fresh order there; frees room for the top) | 378.8k | **yes** |
+| Keep orders 2–3 ticks behind | 263k – 317k | no |
+| Quote 200 lots per level | 341k – 372k | no |
+| **Inventory free zone 80, step 15** | 383k (60: 372k – 380k, 99: 378k – 380k) | **yes** |
+| Looser position cap 110 – 200, with an emergency IOC above 100 | 86k – 207k after penalties of 166k – 330k; worse even before the penalty | no |
+
+**Final round 1 result: 385,561** (±7,856). Full log: no penalty and no position-limit rejects. Maximum drawdown 834. PnL per half hour 54k – 59k throughout. Ends at +86 lots.
+
+**Overfitting checks:**
+- **Neighbourhood**, one setting at a time: imbalance guard 0.6 / 0.8, free zone 70 / 90, step 10 / 20, quote 100 / 150, forecast step-back 1.5 / 3.0. All between 375k and 392k (−3% to +2%), so it is not a knife-edge fit. The ladder itself matters: 1 level gives 312k, 3 levels 332k.
+- **Time:** every half hour contributes 54k – 59k, so the result is not driven by one episode.
+- **Another tape:** sample_v2 was never used for these choices.
+
+| | before the ladder | ladder | final |
+|---|---|---|---|
+| sample_v2 | 209.4k | 203.1k | 209.1k |
+| follow-through control | −7.6k | −7.6k | −8.1k |
+
+So today's +43% on round 1 does **not** carry over to sample_v2. The gains exploit round 1's own microstructure (1-tick spread, how the touch reverts). They will hold if the next rounds come from the same kind of tape, and will mostly be neutral, not harmful, if they don't.
+
+**Realistic numbers:** round 1 now sits at 385k, which is 28% of the 1.35M making-only ceiling. The tweaks above have plateaued around 380k – 392k. 400k+ needs a new mechanism (for example, better queue-position estimates per order, or a fair value that predicts which fills are adverse), not more tuning.

@@ -1,7 +1,7 @@
 """Backtest a strategy over a parameter grid and several tapes, in parallel (--no-logs runs).
 
 Usage:
-  python3 -I scripts/sweep.py strategies/adaptive_mm.py data/sample_p1of2.csv data/sample_p2of2.csv \
+  python3 -I scripts/sweep.py strategies/adaptive_mm.py data/round1.csv \
       -p TAKE_THRESHOLD=0.5,1,2 -p TAKE_POS=1,5
 
 Each -p overrides a top-level `NAME = value` constant in the strategy file; comma-separated values form a

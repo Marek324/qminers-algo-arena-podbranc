@@ -1,6 +1,6 @@
-"""Parameter sweep: rewrite class constants of a strategy file, backtest each variant, print PnL.
+"""Parameter sweep for class-level constants (`    NAME = value` inside the strategy class): rewrite them, backtest each variant, print PnL.
 
-usage: uv run python scripts/sweep.py strategies/x.py data/sample.csv out_dir 'NAME=v1,v2' 'NAME2=v1,v2' ...
+usage: uv run python scripts/sweep_class.py strategies/x.py data/sample.csv out_dir 'NAME=v1,v2' 'NAME2=v1,v2' ...
 """
 import itertools, json, re, subprocess, sys
 from concurrent.futures import ThreadPoolExecutor

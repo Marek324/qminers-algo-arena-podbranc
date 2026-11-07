@@ -49,7 +49,7 @@ The parts that carry over: **a good fair price (3), taking with IOC (1), making 
 
 ## 2. Our data
 
-Analysis scripts: `scripts/record_book.py` (replays a tape through the engine and saves the best bid/ask and trades) and `scripts/sweep.py` (parameter grid search).
+Analysis scripts: `scripts/record_book.py` (replays a tape through the engine and saves the best bid/ask and trades) and `scripts/sweep_class.py` (parameter grid search).
 
 ### `data/sample.csv` (synthetic, 1 h)
 

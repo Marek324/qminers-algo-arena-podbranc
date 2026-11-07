@@ -64,7 +64,7 @@ This step took v2 from 113k to 276k. The edge per lot was already good; the fix 
 ## Step 4: tune, but pick the middle of the plateau
 
 ```bash
-uv run python scripts/sweep.py strategies/<file>.py data/<round>.csv <scratch_dir> 'PARAM=a,b,c' 'PARAM2=x,y'
+uv run python scripts/sweep_class.py strategies/<file>.py data/<round>.csv <scratch_dir> 'PARAM=a,b,c' 'PARAM2=x,y'
 ```
 
 - Choose a value where **neighbouring settings score similarly**, not the single best run.

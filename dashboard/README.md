@@ -34,3 +34,6 @@ Trades are not in the CSV. `dashboard/engine.py` replays the tape with the simul
 - cancels of unknown orders are ignored
 
 The replay is cached and keeps a full-book checkpoint every few thousand events, so the book at any moment is rebuilt quickly. A 3M-row file loads in a few seconds.
+
+## Analysis tab
+The full statistical report from the `analysis/` package for the selected file: spread and depth, volatility across horizons, price impact, maker markouts, order lifecycles, signal correlations and deciles, per-bin regimes, a depth heatmap, a column explorer for the 1 s series, technical indicators (EMA, SMA, MACD, RSI, Bollinger, ATR, stochastic, ADX, VWAP, ...) with their predictive power, and the theoretical max and min PnL. It loads `logs/analysis/<file>.json` when that is newer than the CSV (written by `uv run analysis.py data/<file>.csv`); otherwise press **Run analysis**, which computes it (about 12 s per million rows) and saves it there. `docs/ANALYSIS.md` explains every number.

@@ -1,6 +1,7 @@
 """Streamlit dashboard for raw market-data CSVs (tape): candles, trades, order book and breakdowns over time.
 
 Run:  uv run --with streamlit streamlit run dashboard/app.py
+The Analysis tab renders reports from the analysis/ package (docs/ANALYSIS.md).
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ import streamlit.components.v1 as components
 from plotly.subplots import make_subplots
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import analysis_tab  # noqa: E402
 import engine  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -818,12 +820,12 @@ if upload is not None:
     data = upload.getvalue()
     source = f'upload:{upload.name}:{hashlib.blake2b(data, digest_size=8).hexdigest()}'
     replay_ = load_bytes(source, data)
-    fname = upload.name
+    fname, csv_path = upload.name, None
 elif choice is not None:
     stt = choice.stat()
     source = f'{choice}:{stt.st_mtime}:{stt.st_size}'
     replay_ = load_path(str(choice), stt.st_mtime, stt.st_size)
-    fname = choice.name
+    fname, csv_path, data = choice.name, choice, None
 else:
     st.info('Put a CSV in data/ or upload one in the sidebar.')
     st.stop()
@@ -847,4 +849,8 @@ if replay_.dups:
     st.warning(f'{replay_.dups} inserts reused a live order id (the simulator would raise).')
 
 options = dict(levels=int(levels), log_half=int(log_half), ids=ids)
-st.fragment(view, run_every=0.8 if st.session_state.get('playing') else None)(replay_, source, options)
+replay_tab, analysis_view = st.tabs(['Replay', 'Analysis'])
+with replay_tab:
+    st.fragment(view, run_every=0.8 if st.session_state.get('playing') else None)(replay_, source, options)
+with analysis_view:
+    analysis_tab.render(source, fname, csv_path, data)

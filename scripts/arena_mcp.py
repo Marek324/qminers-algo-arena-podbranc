@@ -41,7 +41,7 @@ def _get(path: str):
     """GET an allowed API path with the bearer token; returns parsed JSON (or text)."""
     if not any(p.match(path) for p in ALLOWED):
         raise ValueError(f'path not allowed (read-only allow-list): {path}')
-    token = os.environ.get('ARENA_TOKEN', '').strip()
+    token = re.sub(r'\s+', '', os.environ.get('ARENA_TOKEN', ''))  # a wrapped paste can leave a newline inside
     if not token:
         raise RuntimeError("ARENA_TOKEN is not set. In the logged-in site's DevTools console run "
                            "localStorage.getItem('qminers.accessToken') and export ARENA_TOKEN='<value>' before starting Claude Code.")
@@ -174,7 +174,18 @@ def arena_leaderboard(round_name: str = '', top: int = 20) -> str:
     round_id = _round_id(round_name)
     if not round_id:
         return 'No rounds found.'
-    raw = _get(f'/rounds/{round_id}/leaderboard')
+    try:
+        raw = _get(f'/rounds/{round_id}/leaderboard')
+    except RuntimeError as e:
+        if round_name or 'HTTP 403' not in str(e):
+            raise
+        # the active round's leaderboard is hidden until it is published: show the latest published round instead
+        published = [r for r in _rows(_get('/rounds/')) if r.get('isLeaderboardPublished') and str(r.get('id')) != round_id]
+        published.sort(key=lambda r: str(r.get('startAt', '')))
+        if not published:
+            raise
+        round_id = str(published[-1]['id'])
+        raw = _get(f'/rounds/{round_id}/leaderboard')
     rows = _rows(raw)
     parsed = [(str(_first(r, TEAM_KEYS)), _num(_first(r, PNL_KEYS))) for r in rows]
     parsed = [(t, p) for t, p in parsed if p is not None]

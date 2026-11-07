@@ -17,7 +17,7 @@ uv sync                                        # Python 3.13 and everything else
 uv run python -m gzip -d data/sample.csv.gz    # the simulator reads plain CSV only; one file at a time, the same for each downloaded round
 ```
 
-`data/sample.csv.gz` is synthetic and its price trends: one resting order per side, and every few seconds an aggressive order takes part of the touch, after which the quotes keep moving in that direction tick by tick for a few seconds and then give part of the move back. `strategies/trend_follower.py` is a simple trend-following strategy: it sends a one-lot IOC order at the touch in the direction of the trades it has just seen. The rounds look nothing like the sample. They are presented as recorded market data, but `round1` turns out to be synthetic, from the same engine as `sample_v2` (see `docs/DATA_ANALYSIS.md`).
+`data/sample.csv.gz` is synthetic and its price trends: one resting order per side, and every few seconds an aggressive order takes part of the touch, after which the quotes keep moving in that direction tick by tick for a few seconds and then give part of the move back. `strategies/trend_follower.py` is a simple trend-following strategy: it sends a one-lot IOC order at the touch in the direction of the trades it has just seen. The rounds look nothing like the sample. They are presented as recorded market data, but `round1` turns out to be synthetic, from the same engine as `sample_v2` (see `docs/DATA_ANALYSIS.md`). To generate more sessions like a round from our fitted model, see `docs/GENERATING_DATA.md`; to fit a new round, `docs/NEW_ROUND.md`.
 
 ## Writing a strategy
 

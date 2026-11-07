@@ -136,7 +136,7 @@ def measure(path: Path, name: str, rep: dict) -> GenParams:
     p = GenParams(
         name=name, duration_s=dur, limit_rate=float(lim.sum() / dur), ioc_rate=float(ioc.sum() / dur),
         sigma_s=float(_g(rep, 'price', 'vol_ticks_per_sqrt_s', '60s') or 1.0), x_mean=x_mean, x_std=x_std,
-        life_mean_s=float(life.mean()) if len(life) else 0.5, cancel_filled=cancel_rows > 0.97, ioc_offset=ioc_offset,
+        life_mean_s=float(life.mean()) if len(life) else 0.5, cancel_filled=bool(cancel_rows > 0.97), ioc_offset=ioc_offset,
         limit_sizes_file=f'{name}_limit_sizes.npy', ioc_sizes_file=f'{name}_ioc_sizes.npy',
         impact_k=kappa_raw, impact_beta=beta, ioc_mode='S', clamp=True,
     )

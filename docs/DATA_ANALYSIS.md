@@ -95,7 +95,7 @@ Overall, 52% stop at the best price and 46% go one tick through on `round1`. On 
   - The exchange treats them as no-ops.
   - `sample_v2` never does this: it purged the timer when an order filled.
   - So in `round1`, cancels in the feed don't reliably mean the queue got shorter.
-- **S is exogenous.**
+- **S ignores the mid, but not IOCs** (see [Synthetic twin](#synthetic-twin-of-round1)). On `round1` each IOC moves S for good, more for bigger orders.
   - The mid chases S with a half-life of about 260ms on `sample_v2` and about 200ms on `round1`.
   - S doesn't react to the mid: the gap between them explains under 0.6% of later changes in S.
   - S has no grid of tick fractions.
@@ -137,6 +137,33 @@ Overall, 52% stop at the best price and 46% go one tick through on `round1`. On 
 - Using only what a strategy sees in its snapshots, a replay of `sample_v2` gave R² 29% at 0.5s with a 200ms half-life.
 - On `round1`, 100–150ms is clearly better.
 - The grid filter is likely better than the simple average, but has not yet been tested online.
+
+## Synthetic twin of round1
+
+`scripts/gen_tape.py` generates a `round1`-like tape and saves the true S next to it (`<out>_S.npz`: `t_us`, `S`, market-only `mid`). `scripts/fit_synth.py` compares generated tapes with `round1`.
+
+**Missing piece: IOC impact on S.** With the parameters above and an exogenous S, the twin matches `round1` on rates, spread shares, depth, fill rates and IOC sweeps, but it is far too easy:
+
+- Maker markout at 1s is +0.60 ticks/lot, against +0.07 on `round1`.
+- `imbalance_mm` makes about 895k per 12,000s, against 616k.
+
+`round1`'s mid move after a taker event grows with its size and does not decay: about +0.1 ticks below 18 lots and +0.6 above 192 lots, the same at 1s and at 60s. Adding a permanent jump `S += side · κ · size^α` at every IOC (size = order size), and lowering the diffusion to compensate, fixes this.
+
+| Fit: κ 0.0075, α 0.7, σ 0.5 | twin | `round1` |
+|---|---|---|
+| Impact by taker size (1–5s mean), 5 bins | .11–.16 / .13–.19 / .20–.24 / .29 / .63–.68 | .09 / .17 / .21 / .33 / .59 |
+| Maker markout at 1s | 0.04–0.08 | 0.07 |
+| Realized vol (60s window) | 0.97–1.03 | 0.91 |
+| Hindsight max PnL (`analysis.py` `max_pnl`, 12,000s) | 1.377–1.382M (3 seeds) | 1.389M |
+| `imbalance_mm` PnL (12,000s) | 582k / 610k / 594k (3 seeds) | 616k |
+| `adaptive_mm` PnL (12,000s, version 42b27bb) | 607k / 605k / 601k (3 seeds) | 651k |
+
+PnL is sensitive to κ: κ 0.0065 gives about 660–700k. An independent fit in [round1.md](round1.md) (`analysis/generator.py`) found the same push, 0.009 · size^0.65 with σ 0.75. That model is slightly kind to market makers (`imbalance_mm` 194k/h vs 185k/h real); this one is slightly harsh (179k/h). Vol runs slightly high, so the exact form (order vs executed size, power vs other shapes) is still open.
+
+**Using it to measure a strategy:**
+
+- `imbalance_mm` gets 42–44% of the hindsight max on the twins and 44.3% on `round1`. `adaptive_mm` (version 42b27bb, with the hidden-price estimate) gets 43.6–43.9% on the twins and 46.8% on `round1`; the version before it got 24–26% and 27.8%. The hindsight max is perfect foresight (it only takes the fills that turn out good), so it is a loose upper bound, not an achievable target.
+- `scripts/oracle_s_mm.py` is `imbalance_mm` reading the true S instead of Ŝ (local only, not submittable); `scripts/sweep_oracle.py` sweeps it. With the true S it scores **no better** than with Ŝ (best 68k vs 75k on a 1500s tape over K_S, K_INV and EDGE_TAKE; 451k–568k vs 582k on the full seed-1 twin). The Ŝ estimate is not what limits this strategy; inventory pinned at ±100, queue position and fills by big impactful IOCs are.
 
 ## Seed / RNG recovery
 

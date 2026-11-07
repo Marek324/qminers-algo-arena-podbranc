@@ -97,17 +97,30 @@ class GenParams:
         return cls(**d)
 
 
-def generate(p: GenParams, seed: int = 0, duration_s: float | None = None) -> tuple[pd.DataFrame, np.ndarray, np.ndarray]:
-    """(tape rows, S sample times in seconds, S values) for one session."""
+def generate(p: GenParams, seed: int = 0, duration_s: float | None = None,
+             s_path: tuple[np.ndarray, np.ndarray] | None = None,
+             jump_ticks: float = 20.0,
+             regimes: tuple[np.ndarray, np.ndarray] | None = None) -> tuple[pd.DataFrame, np.ndarray, np.ndarray]:
+    """(tape rows, S sample times in seconds, S values) for one session.
+
+    s_path = (times s, S values), e.g. a price path rebuilt from a hold-probe PnL: S follows it (linear between samples
+    plus a Brownian bridge with the regime's sigma, plus each IOC's push relaxed back onto the path), and the jumps are
+    the path's own moves of >= jump_ticks between samples instead of random ones.
+    regimes = (bounds, states) replaces the random calm/storm path (bounds[0] = 0, bounds[-1] >= T, 1 = storm).
+    """
     rng = np.random.default_rng(seed)
     T = duration_s or p.duration_s
+    if s_path is not None:
+        T = min(T, float(s_path[0][-1]))
     lim_sizes = np.load(PARAM_DIR / p.limit_sizes_file) if p.limit_sizes_file else np.full(1, 30)
     ioc_sizes = np.load(PARAM_DIR / p.ioc_sizes_file) if p.ioc_sizes_file else np.full(1, 40)
 
     n_lim = rng.poisson(p.limit_rate * T)
     t_lim = np.sort(rng.uniform(0, T, n_lim))
     # regime path: alternating calm / storm stretches (one calm stretch covering everything without regimes)
-    if p.storm_dur_s > 0:
+    if regimes is not None:
+        bounds, states = list(regimes[0]), list(regimes[1])
+    elif p.storm_dur_s > 0:
         bounds, states, t, z = [0.0], [], 0.0, int(rng.random() < p.storm_dur_s / (p.calm_dur_s + p.storm_dur_s))
         while t < T:
             states.append(z)
@@ -131,10 +144,20 @@ def generate(p: GenParams, seed: int = 0, duration_s: float | None = None) -> tu
     t_ioc = stream(p.ioc_rate, p.ioc_rate_storm)
     n_ioc = len(t_ioc)
     # jumps in S, and the burst of extra IOCs after each one
-    t_jump = stream(p.jump_rate, p.jump_rate_storm) if (p.jump_rate > 0 or p.jump_rate_storm > 0) else np.zeros(0)
+    if s_path is not None:
+        dpath = np.diff(s_path[1])
+        big = np.flatnonzero(np.abs(dpath) >= jump_ticks)
+        # the jump happens somewhere inside its sample interval
+        t_jump = np.sort(s_path[0][big] + rng.random(len(big)) * np.diff(s_path[0])[big])
+        t_jump = t_jump[t_jump < T]
+    else:
+        t_jump = stream(p.jump_rate, p.jump_rate_storm) if (p.jump_rate > 0 or p.jump_rate_storm > 0) else np.zeros(0)
     if len(t_jump):
-        sizes = np.load(PARAM_DIR / p.jump_sizes_file) if p.jump_sizes_file else np.full(1, 10.0)
-        j_size = rng.choice(sizes, len(t_jump)) * np.where(rng.random(len(t_jump)) < p.jump_up, 1.0, -1.0)
+        if s_path is not None:
+            j_size = dpath[big][: len(t_jump)]
+        else:
+            sizes = np.load(PARAM_DIR / p.jump_sizes_file) if p.jump_sizes_file else np.full(1, 10.0)
+            j_size = rng.choice(sizes, len(t_jump)) * np.where(rng.random(len(t_jump)) < p.jump_up, 1.0, -1.0)
         if p.ioc_boost > 0:
             extra = [tj + rng.exponential(p.ioc_tau, rng.poisson(p.ioc_boost * p.ioc_tau)) for tj in t_jump]
             extra = np.concatenate(extra)
@@ -143,7 +166,7 @@ def generate(p: GenParams, seed: int = 0, duration_s: float | None = None) -> tu
     else:
         j_size = np.zeros(0)
     t_ioc = np.sort(t_ioc)
-    if p.jump_rate > 0 and 0 < p.jump_min < p.jump_detect and p.storm_dur_s == 0:
+    if s_path is None and p.jump_rate > 0 and 0 < p.jump_min < p.jump_detect and p.storm_dur_s == 0:
         r = (p.jump_min / p.jump_detect) ** p.jump_alpha
         n_small = rng.poisson(p.jump_rate * (1 / r - 1) * T)
         u = rng.random(n_small)
@@ -165,7 +188,7 @@ def generate(p: GenParams, seed: int = 0, duration_s: float | None = None) -> tu
     order = np.argsort(t_all, kind='stable')
     ts_sorted = t_all[order]
     sig = p.sigma_s
-    if p.storm_dur_s > 0:
+    if p.storm_dur_s > 0 or regimes is not None:
         z_ev = states[np.clip(np.searchsorted(bounds, ts_sorted, 'right') - 1, 0, len(states) - 1)]
         sig = np.where(z_ev == 1, p.sigma_storm, p.sigma_s)
     var = sig**2 * np.diff(np.r_[0.0, ts_sorted])
@@ -184,8 +207,27 @@ def generate(p: GenParams, seed: int = 0, duration_s: float | None = None) -> tu
     push = np.zeros(len(t_all))
     push[n_lim:] = p.impact_k * np.where(ioc_side == 0, 1.0, -1.0) * np.power(ioc_qty.astype(float), p.impact_beta)
     push_sorted = push[order]
-    S_sorted = p.s0 + np.cumsum(dS) + np.cumsum(push_sorted) - push_sorted
-    if len(t_jump):
+    if s_path is not None:
+        pt, ps = s_path
+        W = np.cumsum(dS)
+        # Brownian bridge: remove W's value at the path samples, keep the noise between them
+        Wg = np.interp(pt, ts_sorted, W)
+        bridge = W - np.interp(ts_sorted, pt, Wg)
+        # IOC pushes act right away but the path already contains their long-run effect
+        P = np.cumsum(push_sorted) - push_sorted
+        local = P - np.interp(ts_sorted, pt, np.interp(pt, ts_sorted, P))
+        # the path is piecewise linear between samples, except a jump is a step at its own time
+        base = np.interp(ts_sorted, pt, ps)
+        if len(t_jump):
+            k = np.searchsorted(pt, t_jump, 'right') - 1  # sample interval of each jump
+            for tj, js, kk in zip(t_jump, j_size, k, strict=True):
+                a, b = np.searchsorted(ts_sorted, [pt[kk], pt[kk + 1]])
+                u = (ts_sorted[a:b] - pt[kk]) / (pt[kk + 1] - pt[kk])
+                base[a:b] -= js * u - js * (ts_sorted[a:b] >= tj)
+        S_sorted = base + bridge + local
+    else:
+        S_sorted = p.s0 + np.cumsum(dS) + np.cumsum(push_sorted) - push_sorted
+    if len(t_jump) and s_path is None:
         S_sorted += np.r_[0.0, np.cumsum(j_size)][np.searchsorted(t_jump, ts_sorted, 'right')]
     S_all = np.empty_like(S_sorted)
     S_all[order] = S_sorted
@@ -201,7 +243,7 @@ def generate(p: GenParams, seed: int = 0, duration_s: float | None = None) -> tu
     lim_px = np.where(lim_side == 0, np.floor(S_lim - X), np.ceil(S_lim + X)).astype(np.int64)
     lim_qty = rng.choice(lim_sizes, n_lim)
     life = rng.exponential(p.life_mean_s, n_lim)
-    if p.storm_dur_s > 0 and p.life_storm_s > 0:
+    if (p.storm_dur_s > 0 or regimes is not None) and p.life_storm_s > 0:
         z_lim = states[np.clip(np.searchsorted(bounds, t_lim, 'right') - 1, 0, len(states) - 1)]
         life = np.where(z_lim == 1, rng.exponential(p.life_storm_s, n_lim), life)
     offs = np.array(list(p.ioc_offset.keys()) or [0])

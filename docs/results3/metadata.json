@@ -1,0 +1,10 @@
+{
+  "trader": "sim",
+  "trader_class": "ProbeDepthFlow",
+  "data_file": "/work/backtest.csv",
+  "latency": 0.005,
+  "position_limit": 100,
+  "max_potential_position": 1000,
+  "position_breach_penalty_per_second": 10000.0,
+  "run_timestamp": "2026-11-07T22:28:05.635356"
+}

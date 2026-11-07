@@ -4,12 +4,20 @@ This directory contains visual artifacts demonstrating how the mathematical shap
 
 ## Generated Visualizations
 
-1. **Private Evaluation Tape Reconstruction (12,000s = 3.33 hr)**:
+1. **Combined Depth & Liquidity Analysis (Depth 1 + Depth 3)**:
+   - File: [`results_depth_combined.png`](results_depth_combined.png) (20×15 inches, 150 DPI)
+   - Source Data: [`docs/results (2)/pnl.csv`](file:///home/alcrid/Projects/Hackatons/Qminers/docs/results%20(2)/pnl.csv) (Depth 1, 10 lots) and [`docs/results3/pnl.csv`](file:///home/alcrid/Projects/Hackatons/Qminers/docs/results3/pnl.csv) (Depth 3, 100 lots)
+   - Unlocks the exact order book thickness and liquidity collapse profile:
+     - In **80.5%** of the session, the touch queue has $\ge 100\text{ lots}$ resting.
+     - In **19.5%** of the session, the touch queue is depleted ($< 100\text{ lots}$), forcing execution slippage.
+     - During jumps, slippage explodes by **2.6x**, reaching up to **38.98 ticks** (a \$3,898 cash loss across 100 lots).
+
+2. **Private Evaluation Tape Reconstruction (12,000s = 3.33 hr)**:
    - File: [`results2_market_reconstruction.png`](results2_market_reconstruction.png) (20×14 inches, 150 DPI)
    - Source Data: [`docs/results (2)/pnl.csv`](file:///home/alcrid/Projects/Hackatons/Qminers/docs/results%20(2)/pnl.csv) and [`docs/results/pnl.csv`](file:///home/alcrid/Projects/Hackatons/Qminers/docs/results/pnl.csv)
    - Shows the full reconstructed price path $S(t) = 10,001 + \Pi(t)/10$, empirical jump distribution fitting, calm Brownian diffusion, and performance comparison against the +$1.29M champion run.
 
-2. **6,000s Diagnostic Calibration Experiment**:
+3. **6,000s Diagnostic Calibration Experiment**:
    - File: [`pnl_distribution_inference.png`](pnl_distribution_inference.png) (18×12 inches, 150 DPI)
    - Source Data: [`logs/probe_experiment/pnl.csv`](file:///home/alcrid/Projects/Hackatons/Qminers/logs/probe_experiment/pnl.csv)
    - Diagnostic validation matching inferred jumps against the ground-truth catalog.

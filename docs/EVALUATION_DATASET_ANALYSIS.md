@@ -37,6 +37,23 @@ The high-resolution visualization dashboard is saved at [`data_visualization/res
 
 ---
 
+## 3. Order Book Depth & Liquidity Collapse Analysis (Depth 1 + Depth 3)
+
+By combining **Depth 1** ([`docs/results (2)`](docs/results%20(2)/), holding $10\text{ lots}$) and **Depth 3** ([`docs/results3`](docs/results3/), holding $100\text{ lots}$), we extracted the order book thickness and slippage profile across the entire 12,000-second evaluation dataset:
+
+![Combined Order Book Depth Analysis](../data_visualization/results_depth_combined.png)
+
+### Key Depth Findings:
+1. **Touch Liquidity Availability**:
+   - In **80.5%** of simulation seconds (9,660 / 12,001), the touch queue has $\ge 100\text{ lots}$ resting with zero slippage ($P_{\text{bid}, 10} = P_{\text{bid}, 100}$).
+   - In **19.5%** of seconds (2,341 / 12,001), the touch is depleted ($< 100\text{ lots}$), forcing execution into deeper book levels.
+2. **The 2.6x Liquidity Explosion During Jumps**:
+   - During quiet regimes, average depth slippage is only **$0.10\text{ ticks}$** (max $8.47\text{ ticks}$).
+   - Within $\pm 10\text{ seconds}$ of major jumps, average slippage explodes by **2.6x** to **$0.27\text{ ticks}$**, reaching an extreme peak collapse of **$38.98\text{ ticks}$** (a **\$3,898.00** cash loss across 100 lots).
+   - This proves that when the generator initiates a jump, the resting order book is severely hollowed out, creating catastrophic slippage for blind market takers.
+
+---
+
 ## 3. Econometric Characterization of the Asset
 
 Through high-frequency econometric decomposition (Barndorff-Nielsen & Shephard Bi-Power Variation tests), the market process was separated into its continuous diffusive and discontinuous jump components:

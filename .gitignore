@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ruff_cache/
+# The rounds' market data, downloaded from the website
+data/*
+!data/.gitkeep
+!data/sample.csv.gz
+# Simulator output
+logs/*
+!logs/.gitkeep

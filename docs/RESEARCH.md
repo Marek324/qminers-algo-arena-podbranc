@@ -468,3 +468,81 @@ The scored data could be more volatile or otherwise harder than the public round
 - Setting the keep edge equal to the join edge (no hysteresis gap) is clearly worse at every edge.
 - **Adopted `EDGE` 0.4 with `KEEP_EDGE` 0.25.** It is best or tied on round 1, all three twins and 7 of 8 stress scenarios.
 - Controls are unchanged: sample_v2 242.2k, null_1 −13.8k, follow_1 −39.0k.
+
+## Second research pass: Prosperity 4 and queue-management papers (2026-11-07)
+
+**Why this direction:** on generated round-1 sessions, `imbalance_mm.py` fed the *true* hidden price (re-tuned) scored
+188k per hour against 194k as-is (see [round1.md](round1.md)). A better price estimate does not raise the score, so the
+remaining room is in quote and queue management, not in estimating S.
+
+### IMC Prosperity 4 (2026): techniques new to us
+
+Sources: [Durpie-Git, 4th globally / 1st Europe](https://github.com/Durpie-Git/imc-prosperity-4),
+[Alpha Search team](https://github.com/fabianbaiertum/IMC-Prosperity-4),
+[nathanw3456, 57th](https://github.com/nathanw3456/Prosperity_4_Writeup). No overall winner has published a write-up.
+
+| Technique | Fits round 1? |
+|---|---|
+| **Inventory thresholds from dynamic programming** (Durpie): a value function over inventory −80…+80 gives bid and ask edge thresholds per inventory level, instead of a linear skew | **Yes, untried.** `imbalance_mm.py` uses a linear skew (`K_INV`). The synthetic sessions can supply the data for per-inventory thresholds. |
+| **Choose settings by E[PnL] − 0.25·SD across simulations**, not by the best single run (Durpie); rank changes by how they hold up across days (nathanw3456) | **Yes, untried.** Possible now with the synthetic sessions. |
+| **Split PnL into directional carry and spread capture** (Alpha Search): carry = position × Δmid, capture = Σ fills × (mid at fill − fill price) | **Yes, a missing diagnostic.** It shows whether the score comes from spread capture or from inventory drifting the right way. |
+| Hold a position in a dead zone instead of cycling to zero | Already done: the inventory free zone in `imbalance_mm.py`. |
+| Empty-book takers, recurring takers, "100-jump" reversion, bidding zero | **No.** They exploit IMC's bots. Our book never empties and IOC sides are coin flips. |
+
+### Papers not covered above
+
+1. **Lehalle & Mounjid, "Limit Order Strategic Placement with Adverse Selection Risk and the Role of Latency"**
+   ([arXiv:1610.00261](https://arxiv.org/abs/1610.00261), Market Microstructure and Liquidity 2017). Stochastic control
+   of a single limit order on a large-tick asset: keep it or cancel it, driven by queue imbalance, with latency eroding
+   the value of acting. This is the decision our market maker makes on every event.
+2. **Queue-reactive model**: Huang, Lehalle & Rosenbaum, "Simulating and analyzing order book data: the queue-reactive
+   model" (JASA 2015), and the extension with order sizes ([arXiv:2405.18594](https://arxiv.org/abs/2405.18594)).
+   Arrival and cancel rates depend on queue size, which gives a fill-probability model. Relevant because round-1 limit
+   sizes run from 1 to 124k lots.
+3. **hftbacktest, ["Queue-Based Market Making in Large Tick Size Assets"](https://hftbacktest.readthedocs.io/en/latest/tutorials/Queue-Based%20Market%20Making%20in%20Large%20Tick%20Size%20Assets.html).**
+   A worked strategy for an asset whose spread is usually one tick. Its best version drops fair-value pricing: join the
+   best price, except step back a tick when the queue there is thin **and** inventory says not to add on that side.
+   We tested "join only short queues" and the imbalance guard, not this inventory-conditioned version.
+4. **Cartea & Wang, "Market Making with Alpha Signals"** (IJTAF 2020). A signal that jumps with each aggressive order
+   and decays between them; the market maker uses it to avoid adverse fills and to cross the spread opportunistically,
+   more so as inventory tolerance rises. This is the design of `K_FLOW` + `EDGE_TAKE`, with theory for scaling the take
+   threshold.
+5. **Capponi, Figueroa-López & Yu, "Market Making with Stochastic Liquidity Demand"**
+   ([arXiv:2101.03086](https://arxiv.org/abs/2101.03086)). Fills depend linearly on the distance between the quote and
+   the fundamental price, and forecasts of fundamental drift enter the quotes. In our market this holds literally: IOCs
+   are priced at round(S ± 1), so an ask at price a can only be hit when S ≥ a − 1.5.
+
+Checked and not useful here: Barzykin, "Optimal Quoting under Adverse Selection and Price Reading"
+([arXiv:2508.20225](https://arxiv.org/abs/2508.20225)); there "price reading" means other traders inferring the
+dealer's inventory from its quotes, which a fixed tape can't do. Jane Street ETC write-ups are self-reported and mostly
+simple fair-value bond trading.
+
+### Two ideas that follow from the fitted market model
+
+- **Queues shrink at a known rate.** Every limit order has its own exponential cancel timer (round 1: mean 0.47 s),
+  whatever its size. With no IOC, the lots ahead of a resting order therefore shrink by a factor of e every 0.47 s on
+  average, even with a 124k-lot order in front. A long queue is less of a problem than it looks, and keeping an order
+  is worth much more than re-posting it. This supports the queue ladder (+31%), and the value of keeping an order can
+  be computed instead of tuned.
+- **Which fills are possible depends on S.** With IOCs at round(S ± 1), a quote one tick behind the best price is only
+  filled once S has moved through the touch. With the push per IOC in round 1, that is the bad case. The model can
+  give the expected value of each quote position for a given S estimate, which turns "where to rest" into a table.
+
+### Suggested order of experiments (synthetic round-1 train sessions, then validation, then the real tape once)
+
+1. PnL split into carry and spread capture for `imbalance_mm.py`: cheap, and it shows where the 615k comes from.
+2. Inventory-conditioned thin-queue step-back (hftbacktest version 3) on top of `imbalance_mm.py`.
+3. Keep-or-cancel value from the queue shrink rate (Lehalle–Mounjid style).
+4. Per-inventory thresholds from dynamic programming (Durpie).
+5. Pick finalists by E[PnL] − 0.25·SD on the validation sessions, then confirm once on `data/round1.csv`.
+
+### Market regimes we know (summary)
+
+- **Between tapes:** `sample` trends (makers lose −9 ticks/lot at 5 s); `sample_v2` is calm with a 2-tick spread 58%
+  of the time and no impact; `round1` has a 1-tick spread 93% of the time, 1.85× the volatility and a permanent push
+  per IOC.
+- **Within round 1:** no regime changes. Rates are flat across 10-minute blocks, per-minute volatility barely varies
+  (coefficient of variation 0.10, autocorrelation +0.01), and `imbalance_mm.py` makes 74–83k in every 25-minute slice.
+- **Micro-states within round 1** (what a strategy reacts to): 1- vs 2-tick spread (2-tick spreads last about 23 ms);
+  the book lagging S (half-life about 200 ms); the second after a big IOC (S just pushed, about +0.8 ticks for 1,000
+  lots); strong queue imbalance; inventory near ±100.

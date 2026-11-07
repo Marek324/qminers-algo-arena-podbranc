@@ -22,6 +22,16 @@ Then backtest on it like any tape:
   strategy's fair-value estimate is. A strategy never sees S.
 - The same seed always gives the same session. Use different seeds for training and for testing.
 
+## A ready-made train/validation set
+
+`scripts/make_synthetic.py` (Marek) generates a whole dataset in `data/synthetic/`:
+- `exact` sessions use the round1 parameters;
+- `random` sessions each draw their own parameters from ranges that cover sample_v2, round1 and beyond, and 30% of them have no IOC push;
+- train and validation never share seeds;
+- the true S is saved next to each tape, and `manifest.json` lists every session's parameters.
+
+Use it for strategy search. Use `generate` directly, as above, for a single parameter set such as the ones below.
+
 ## What's needed
 
 `logs/` is git-ignored, so a fresh checkout has no parameter files. Create them from the tape:

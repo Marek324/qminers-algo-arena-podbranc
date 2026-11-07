@@ -79,7 +79,8 @@ Analysis scripts: `scripts/record_book.py` (replays a tape through the engine an
 - Fills when the spread is 2 ticks earn about +0.54, but quoting *inside* the spread lost money (as on v2).
 - Signals: touch imbalance (Spearman 0.26 at 1 s) and aggressive flow over the last second (0.19) are the best; past returns and technical indicators are near 0.
 - Ceiling from the analysis report (perfect hindsight): **1.39M**, almost all of it from resting orders (1.35M).
-- Best strategy: **market making with a flow term** in the fair price. `imbalance_mm.py` makes **468,499**, about 34% of the ceiling.
+- The tape is synthetic (see [DATA_ANALYSIS.md](DATA_ANALYSIS.md)): limit orders are placed around a **hidden fair price S** that the mid lags by about 0.5 s. A running mean of new limit-order prices (each side averaged) estimates S. Offline, S estimate − mid explains 22% of the next 0.5 s mid move, against 11% for touch imbalance.
+- Best strategy: **market making around the S estimate, crossing in when the signal is strong**. `imbalance_mm.py` makes **615,583**, about 44% of the ceiling.
 - `adaptive_mm.py` makes 195,037; `flow_momentum.py` loses 5,142,910.
 
 ## 3. Our strategies
@@ -126,7 +127,21 @@ Round 1 re-tune (current settings: `EDGE` 0.4, `K_FLOW` 0.5, `FLOW_TAU_US` 200,0
 - Sweeping each half separately ranks the settings in the same order (best on both: `EDGE` 0.35–0.4, `K_FLOW` 0.5), so the gain is not overfitting.
 - `EDGE` 0.35 scored higher (up to 498k) but was uneven across `K_INV`; 0.4 sits in the stable part.
 - Quoting inside the spread (`EDGE_IN` < 0.5) lost money at every setting.
-- PnL is 54–61k in every 25-minute slice and never goes below 0.
+
+Round 1, hidden-price version (current settings: `K_S` 0.75, `S_ALPHA` 0.1, `K_IMB` 0.15, `EDGE_TAKE` 0.25, `EDGE` 0.4, `K_FLOW` 0.5, `FLOW_TAU_US` 200,000). Tuned on the first half only, checked on the second:
+
+| Version | 1st half (tuning) | 2nd half (held out) | full round 1 |
+|---|---|---|---|
+| Flow term only (previous) | 228,527 | 240,057 | 468,499 |
+| + S estimate (`K_S` 0.25, `S_ALPHA` 0.25) | 247,198 | | |
+| + cross in when fair − best ask ≥ 0.25 (`EDGE_TAKE`) | 273,168 | 271,564 | |
+| Smoother S (`S_ALPHA` 0.1), `K_S` 0.75 | **309,298** | **306,213** | **615,583** |
+
+- **S estimate:** new market orders are found by id (ids only grow), scanning the top 3 price levels of a side only when that side's snapshot list changed. Run time is about 90 s for round 1.
+- **Pure taking doesn't pay:** even the strongest 5% of signals lose about 0.35 ticks per lot on an IOC round trip. Crossing in and letting the quotes unwind does pay.
+- `EDGE_TAKE` 0.1 was unstable (one setting fell to 167k), so it stays at 0.25.
+- `S_ALPHA` 0.08–0.12 with `K_S` 0.5–0.75 all score 293–309k per half; the two halves rank settings the same way.
+- PnL is 74–83k in every 25-minute slice and never goes below 0.
 
 ## 4. Ideas not yet tried
 

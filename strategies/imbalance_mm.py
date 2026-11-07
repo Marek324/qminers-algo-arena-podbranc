@@ -1,20 +1,27 @@
-"""Queue-keeping market maker, skewed by touch imbalance.
+"""Queue-keeping market maker around an estimate of the hidden fair price.
 
-The market: a deep book (hundreds of lots per level), a 1-2 tick spread, and
-a heavy stream of mostly uninformed IOC orders (the mid barely moves after
-them). Resting orders earn the spread, so profit is set by how many lots get
-filled, and that depends on queue position.
+The market (round 1, see docs/DATA_ANALYSIS.md): synthetic. Limit orders
+arrive around a hidden fair price S that random-walks; the visible mid lags S
+by about 0.5 s. IOCs are random in side and time. The book is deep and the
+spread is 1 tick about 93% of the time. Resting orders earn the spread.
 
 Each event:
-1. fair = mid + K_IMB * imbalance + K_FLOW * flow / depth - K_INV * inventory
+1. fair = mid + K_S * (S_hat - mid) + K_IMB * imbalance + K_FLOW * flow / depth
+          - K_INV * inventory
+   S_hat = average of the bid-side and ask-side running means of the prices
+   of newly arrived market limit orders (each new order has weight S_ALPHA).
+   New orders are found by id: ids only grow, so any market order id above
+   the highest seen so far is new.
    imbalance = (bid_qty - ask_qty) / (bid_qty + ask_qty) at the touch.
    flow = signed aggressive market volume (buys +, sells -), fading over
    FLOW_TAU_US; depth = running average touch size. Big aggressive orders
    keep moving the price for a fraction of a second, so this keeps us from
    quoting into them.
-2. Target bid: best_bid + 1 if the spread is 2+ ticks and fair - p >= EDGE_IN,
-   otherwise the highest price p <= best_bid with fair - p >= EDGE. The ask
-   mirrors it. (Quoting inside the spread lost money on every tape so far.)
+2. Target bid: the best ask if fair - best_ask >= EDGE_TAKE (cross in; the
+   quotes unwind it later), else best_bid + 1 if the spread is 2+ ticks and
+   fair - p >= EDGE_IN, otherwise the highest price p <= best_bid with
+   fair - p >= EDGE. The ask mirrors it. (Quoting inside the spread lost
+   money on every tape so far.)
 3. Orders are sticky: an order that ended up behind the target price keeps
    resting (and keeps its queue place) while it is within KEEP_LEVELS of the
    target. Orders priced more aggressively than the target, or deeper than
@@ -46,7 +53,7 @@ class ImbalanceMMStrategy(BaseStrategy):
     QTY = 200
     MAX_POS = 100
     EDGE = 0.4           # min ticks between the target price and fair
-    K_IMB = 0.3          # ticks of fair shift at full imbalance
+    K_IMB = 0.15         # ticks of fair shift at full imbalance
     K_INV = 0.002        # ticks of fair shift per lot of inventory
     KEEP_LEVELS = 1      # how many ticks behind the target an order may stay
     MIN_NEW = 10         # don't send orders smaller than this
@@ -54,6 +61,10 @@ class ImbalanceMMStrategy(BaseStrategy):
     K_FLOW = 0.5         # ticks of fair shift per touch-depth of recent aggressive volume
     FLOW_TAU_US = 200_000
     DEPTH_EMA = 0.001
+    K_S = 0.75           # weight of the hidden-price estimate: fair moves K_S of the way from mid to S_hat
+    S_ALPHA = 0.1        # weight of each new limit order in the per-side price average
+    S_LEVELS = 2         # look for new orders this many ticks behind the best price
+    EDGE_TAKE = 0.25     # cross the spread (bid at the best ask) when fair - best_ask >= this
 
     def __init__(self) -> None:
         super().__init__()
@@ -64,6 +75,12 @@ class ImbalanceMMStrategy(BaseStrategy):
         self.flow = 0.0          # signed aggressive volume, fading over FLOW_TAU_US
         self.flow_t = 0
         self.depth = 0.0         # running average touch size
+        # hidden fair price: average price of newly arrived market limit orders, per side
+        self.s_bid = 0.0
+        self.s_ask = 0.0
+        self.max_id = ''         # highest market order id seen so far (ids only grow)
+        self.last_bids = None
+        self.last_asks = None
 
     def _cancel(self, oid: str) -> None:
         if oid not in self.cancel_sent:
@@ -94,7 +111,18 @@ class ImbalanceMMStrategy(BaseStrategy):
         if bb is None or ba is None:
             return
 
-        fair = (bb + ba) / 2 + self.K_IMB * (bq - aq) / (bq + aq) - self.K_INV * self.inv
+        mid = (bb + ba) / 2
+        fair = mid + self.K_IMB * (bq - aq) / (bq + aq) - self.K_INV * self.inv
+        if self.K_S:
+            # the side lists are cached by the engine: a new object means that side changed
+            if bids is not self.last_bids:
+                self.last_bids = bids
+                self._scan_new(bids, -1)
+            if asks is not self.last_asks:
+                self.last_asks = asks
+                self._scan_new(asks, 1)
+            if self.s_bid and self.s_ask:
+                fair += self.K_S * ((self.s_bid + self.s_ask) / 2 - mid)
         if self.K_FLOW:
             now = snapshot.timestamp_us
             self.flow *= math.exp((self.flow_t - now) / self.FLOW_TAU_US)
@@ -106,13 +134,17 @@ class ImbalanceMMStrategy(BaseStrategy):
             self.depth = half if self.depth == 0 else self.depth + self.DEPTH_EMA * (half - self.depth)
             fair += self.K_FLOW * self.flow / self.depth
 
-        if ba - bb >= 2 and fair - (bb + 1) >= self.EDGE_IN:
+        if fair - ba >= self.EDGE_TAKE:
+            pb = ba
+        elif ba - bb >= 2 and fair - (bb + 1) >= self.EDGE_IN:
             pb = bb + 1
         else:
             pb = bb
             while fair - pb < self.EDGE:
                 pb -= 1
-        if ba - bb >= 2 and (ba - 1) - fair >= self.EDGE_IN:
+        if bb - fair >= self.EDGE_TAKE:
+            pa = bb
+        elif ba - bb >= 2 and (ba - 1) - fair >= self.EDGE_IN:
             pa = ba - 1
         else:
             pa = ba
@@ -120,6 +152,26 @@ class ImbalanceMMStrategy(BaseStrategy):
                 pa += 1
         self._side(1, pb)
         self._side(-1, pa)
+
+    def _scan_new(self, views, sign: int) -> None:
+        """Fold market orders newer than max_id, within S_LEVELS of the best price, into the side's average."""
+        first = views[0].price
+        mx = self.max_id
+        lm = len(mx)
+        a = self.S_ALPHA
+        for o in views:
+            if (o.price - first) * sign > self.S_LEVELS:
+                break
+            if o.owner != 'market':
+                continue
+            oid = o.order_id
+            if len(oid) > lm or (len(oid) == lm and oid > mx):
+                if sign < 0:
+                    self.s_bid = o.price if not self.s_bid else self.s_bid + a * (o.price - self.s_bid)
+                else:
+                    self.s_ask = o.price if not self.s_ask else self.s_ask + a * (o.price - self.s_ask)
+                if len(oid) > len(self.max_id) or (len(oid) == len(self.max_id) and oid > self.max_id):
+                    self.max_id = oid
 
     def _side(self, sign: int, target: int) -> None:
         resting = 0

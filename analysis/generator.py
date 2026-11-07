@@ -88,7 +88,7 @@ class GenParams:
     s0: float = 10000.0
 
     def save(self, path: Path) -> None:
-        path.write_text(json.dumps(asdict(self), indent=1))
+        path.write_text(json.dumps(asdict(self), indent=1, default=lambda o: o.item()))
 
     @classmethod
     def load(cls, path: Path) -> GenParams:

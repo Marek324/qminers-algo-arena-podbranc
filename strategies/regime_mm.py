@@ -5,24 +5,27 @@ hidden price S and are clamped so they never cross. The generator switches betwe
 - quiet (about 85% of the time): new buys and sells sit about 2 ticks apart, S moves about 1 tick/sqrt(s);
 - volatile: they sit about 4.3 ticks apart, IOCs come 1.5x as often and S moves 4-6 ticks/sqrt(s), with
   most of the 30-100 tick jumps.
-A market maker that makes about 235k in the quiet spells loses about 300k in the volatile ones.
+A market maker that makes about 235k in the quiet spells loses about 300k in the volatile ones; resting
+orders in volatile spells lose at any distance from S_hat (the fills come when S has run past them).
 
 Each event:
-1. S_hat = average of the per-side EMAs of new market limit order prices (top S_LEVELS ticks).
-   Regime: EMA over new orders (top REG_LEVELS ticks) of |price - mid|; volatile above REG_ON, back to quiet
-   below REG_OFF, and never sooner than REG_HOLD_US after the last reading above REG_ON.
+1. Two estimates of S from new market limit orders (ids only grow, so an id above the highest seen is new):
+   - S_hat (quiet quoting): average of per-side EMAs of new order prices in the top S_LEVELS ticks.
+   - S2 (volatile taking): one EMA over new orders in the top REG_LEVELS ticks of p + C (buy) / p - C (sell).
+     A buy at best_ask - 1 or above may have been clamped, so it can only raise S2 (sells mirror it); this
+     is what catches jumps, where the far side's new orders are out of view.
+   Regime: EMA over new orders of |price - mid|; volatile above REG_ON, back to quiet below REG_OFF, and no
+   sooner than REG_HOLD_US after the last reading above REG_ON.
 2. Quiet: imbalance_mm. fair = mid + K_IMB * imbalance + K_S * (S_hat - mid) + K_FLOW * flow / depth
    - K_INV * inventory; quote at the best price with at least EDGE to fair, cross when fair is EDGE_TAKE
    through the opposite best price.
-3. Volatile: cancel the quotes. If S_hat - best_ask >= V_TAKE, IOC-buy up to floor(S_hat - V_TAKE_PX)
-   (sells mirror it). Hold the position with one passive exit order at S_hat rounded away from the touch,
-   and close what is left by IOC once S_hat says the position no longer has V_KEEP of edge, or after
-   V_MAX_HOLD_US.
+3. Volatile: cancel the quotes. If S2 - best_ask >= V_TAKE (V_FLIP when short), IOC-buy up to
+   floor(S2 - V_TAKE_PX) for all the room under MAX_POS; sells mirror it. Hold until an opposite signal
+   flips the position (V_KEEP / V_MAX_HOLD_US exits are effectively off) or quiet mode unwinds it.
 
+Results (docs/STRATEGIES.md): round2_public 448,818 (halves 186k / 263k), round1 638k, sample_v2 247k.
 Inventory is counted from fills only.
 """
-
-from __future__ import annotations
 
 import math
 from collections import deque

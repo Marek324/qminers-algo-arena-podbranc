@@ -156,6 +156,44 @@ Tested after the generator forensics in [DATA_ANALYSIS.md](DATA_ANALYSIS.md) (al
 - **A better S forecast doesn't mean more PnL here.** The strategy only uses S to decide whether to step back a tick or cross in, and the smoother per-side average decides that better than the sharper estimators.
 - The experimental code (estimator modes and the sweep term) is not in the strategy file. It was kept out to keep the submission lean.
 
+### `strategies/regime_mm.py` (round 2)
+
+Built for `round2_public` (6,000 s, hindsight max 1,705,028). The round-1 market makers all lose there (`imbalance_mm` −62,712, `adaptive_mm_plus` −62,278, `queue_mm` −150,260). The tape alternates between a quiet and a volatile regime ([DATA_ANALYSIS.md](DATA_ANALYSIS.md#two-regimes)), and the split explains the losses: `imbalance_mm` makes +236k in the quiet spells and loses −298k in the volatile ones (958 s, 16% of the time).
+
+1. **Quiet:** `imbalance_mm` unchanged (per-side S average, imbalance, flow, inventory skew, cross at `EDGE_TAKE`).
+2. **Regime switch:** EMA over new limit orders of |price − mid| (`tools/regime_score.py`). Volatile above 1.6, quiet again below 1.35 after at least 3 s.
+3. **Volatile:** cancel all quotes. Take the stale side by IOC when the clamp-aware S estimate (`tools/clamped_ema.py`, alpha 0.25, c 1.1) is `V_TAKE` = 0.75 ticks through the opposite best price, sweeping up to S − 0.5, for all the room under 100. Hold until an opposite signal flips the position. After the spell the quiet maker unwinds it.
+
+| Version (round2_public) | 1st half | 2nd half | full |
+|---|---|---|---|
+| `imbalance_mm` | | | −62,712 |
+| + flat in volatile spells | 113,672 | 109,953 | 223,625 |
+| + IOC sniping in volatile spells, exit when the edge is gone | 162,903 | 199,976 | 362,985 |
+| + hold until the opposite signal | 183,375 | 240,138 | 423,513 |
+| + faster S estimate (alpha 0.25), `V_TAKE` 0.75 | **186,063** | **262,649** | **448,818** (26.3% of max) |
+
+Fill audit (`scripts/fill_audit.py`, full tape): volatile IOCs 169k lots, −0.71 ticks/lot at the fill, +1.27 after 30 s (+214k); quiet resting fills 910k lots at +0.27 (+250k).
+
+Robustness (`scripts/robustness.py`): profitable in 6 of 6 time chunks (worst 50.6k); a mirrored market scores 451k; 8 of 8 bootstrap sessions profitable (5th percentile 99k). PnL rises with volatility, which is the design. Other tapes: round1 638,493 (`imbalance_mm` 650,838), sample_v2 246,544 (285,036), so it is close to the round-1 maker when there is no volatile regime.
+
+Tried, no gain (all on the two halves):
+
+| Idea | Result |
+|---|---|
+| Resting exits at S ± 1 or S ± 3 while holding | −55k to −110k: passive fills in volatile spells lose 3.4 ticks/lot by 5 s |
+| Quoting inside the volatile spread at S ± e, first in queue (offline, using the tape's IOC prices) | loses 0.7–6.6 ticks/lot at every e from 0.5 to 4 |
+| Taker mode all the time (no quiet maker) | 267,756 |
+| Regime thresholds 1.4–2.0, hold 1–10 s | 1.6–2.0 with a 1–3 s hold is flat (417–423k); lower thresholds or longer holds lose |
+| Follow big market IOCs (≥ 200–1,000 lots this event) | 407–450k: S already moves on them |
+| Separate threshold for flipping a position | 438–449k |
+| Quiet maker priced off the clamp-aware S, or crossing on it | 139–382k, or +3k |
+| `HiddenPriceKalman` instead of the clamp-aware EMA in volatile mode | 393–445k |
+| Rolling median of readings instead of an EMA (offline R²) | worse at every window |
+
+**`hmm_mm` / `hmm_mm2` (current best).** Same plan as `regime_mm`, but an online 2-state HMM picks the regime and a Kalman filter, with its speed set by the regime probability, tracks S for both regimes. It makes 502,607 (volatile spells 237k against `regime_mm`'s 187k; quiet about equal). `scripts/tune.py` tuned it on the four 25-minute quarters of round 2 (`data/q/`). A change had to add at least 1% and win at least 3 of 4 quarters. One full pass over 23 constants accepted nothing. The three small changes that each won 3 of 4 quarters (`V_K_FLOW` 1.6, `P_ON` 0.7, `C_LR` 0.0002) together give **`hmm_mm2` = 508,636** (29.8% of max), win both halves (238k / 274k) and pass `robustness.py` (6/6 chunks, mirrored 509,672, 8/8 bootstrap). Rejected as overfit: the clamp-aware EMA in place of the Kalman filter in volatile spells (+17k, but only 2 of 4 quarters, and −40k to −80k when its weight moves by ±0.1), and `V_EDGE_TAKE` 0.75 or `V_K_S` 0.8 (+5k to +7k, 1 of 4 quarters).
+
+Why 40–60% of the hindsight max is out of reach this way: roughly two thirds of it sits in the volatile spells (a rough estimate: the quiet 84% of the time at round 1's 417k/hour gives about 0.58M of the 1.7M), where the hindsight DP rests orders first in queue just before the IOCs that turn out well. Any resting order there loses money in practice, so the volatile share comes only from IOC takes. Those are capped at 100 lots and pay a spread of about 2 ticks.
+
 ## 4. Ideas not yet tried
 
 - **Switch strategy by market type.** Measure how far the mid moves in the 2–3 s after IOCs. If it moves a lot, follow the flow; if not, market-make. That would handle both samples.

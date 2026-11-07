@@ -8,7 +8,7 @@ the order if it is resting and is a no-op otherwise.
 State "at time t" means the book after every event with timestamp <= t.
 """
 
-from bisect import insort
+from bisect import bisect_right, insort
 from dataclasses import dataclass
 
 import numpy as np
@@ -82,6 +82,7 @@ class Replay:
     pm_price: np.ndarray
     pm_qty: np.ndarray
     pm_kind: np.ndarray  # 0 new price level (inside the spread or in a gap: user is first), 1 behind the queue at an existing level, 2 beyond the book at the order's limit
+    pm_join: np.ndarray  # kind 1: event after which the user order must be sent (the level's last trade; -1: from the start); else -1
 
     @property
     def mid(self) -> np.ndarray:
@@ -104,7 +105,7 @@ class Replay:
         return out
 
 
-def replay(tape: pd.DataFrame, grid_step_us: int) -> Replay:
+def replay(tape: pd.DataFrame, grid_step_us: int, join_window_us: int | None = None) -> Replay:
     """Replay the tape and return the recorded arrays."""
     n = len(tape)
     ts_list = tape['ts_us'].tolist()
@@ -170,10 +171,20 @@ def replay(tape: pd.DataFrame, grid_step_us: int) -> Replay:
     pm_px: list[int] = []
     pm_q: list[int] = []
     pm_k: list[int] = []
+    pm_j: list[int] = []
+
+    def join_event(price_last_trade: int | None, i: int) -> int:
+        """Event after which a queue-joining user order is sent: the level's last trade (-1: the start), or no earlier
+        than join_window_us before event i when set (a long-resting order is exposed while the level is empty)."""
+        j = -1 if price_last_trade is None else price_last_trade
+        if join_window_us is not None:
+            j = max(j, bisect_right(ts_list, ts_list[i] - join_window_us) - 1)
+        return j
 
     def ahead_of_user(lvl: dict[int, int], price_last_trade: int | None, i: int) -> int | None:
         """Market quantity ahead of a user order that joined this level right after its last trade; None if it cannot have."""
-        ell = first_land if price_last_trade is None else land_after[price_last_trade]
+        j = join_event(price_last_trade, i)
+        ell = first_land if j < 0 else land_after[j]
         if ell > i:
             return None
         ahead = 0
@@ -231,7 +242,7 @@ def replay(tape: pd.DataFrame, grid_step_us: int) -> Replay:
                 if s == 1:  # market buy: user sells at x
                     x = p if ba is None else min(p, ba - 1)
                     if bb is None or x > bb:
-                        pm_ev.append(i); pm_sd.append(-1); pm_px.append(x); pm_q.append(q); pm_k.append(0)  # noqa: E702
+                        pm_ev.append(i); pm_sd.append(-1); pm_px.append(x); pm_q.append(q); pm_k.append(0); pm_j.append(-1)  # noqa: E702
                     if ba is not None and p >= ba:
                         cum = 0
                         prev = None
@@ -239,18 +250,18 @@ def replay(tape: pd.DataFrame, grid_step_us: int) -> Replay:
                             if lp > p or cum >= q:
                                 break
                             if prev is not None and lp - 1 > prev:
-                                pm_ev.append(i); pm_sd.append(-1); pm_px.append(lp - 1); pm_q.append(q - cum); pm_k.append(0)  # noqa: E702
+                                pm_ev.append(i); pm_sd.append(-1); pm_px.append(lp - 1); pm_q.append(q - cum); pm_k.append(0); pm_j.append(-1)  # noqa: E702
                             ahead = ahead_of_user(asks[lp], last_tr_ask.get(lp), i)
                             if ahead is not None and q - cum - ahead > 0:
-                                pm_ev.append(i); pm_sd.append(-1); pm_px.append(lp); pm_q.append(q - cum - ahead); pm_k.append(1)  # noqa: E702
+                                pm_ev.append(i); pm_sd.append(-1); pm_px.append(lp); pm_q.append(q - cum - ahead); pm_k.append(1); pm_j.append(join_event(last_tr_ask.get(lp), i))  # noqa: E702
                             cum += atot[lp]
                             prev = lp
                         if cum < q and prev is not None and p > prev:
-                            pm_ev.append(i); pm_sd.append(-1); pm_px.append(p); pm_q.append(q - cum); pm_k.append(2)  # noqa: E702
+                            pm_ev.append(i); pm_sd.append(-1); pm_px.append(p); pm_q.append(q - cum); pm_k.append(2); pm_j.append(-1)  # noqa: E702
                 else:  # market sell: user buys at x
                     x = p if bb is None else max(p, bb + 1)
                     if ba is None or x < ba:
-                        pm_ev.append(i); pm_sd.append(1); pm_px.append(x); pm_q.append(q); pm_k.append(0)  # noqa: E702
+                        pm_ev.append(i); pm_sd.append(1); pm_px.append(x); pm_q.append(q); pm_k.append(0); pm_j.append(-1)  # noqa: E702
                     if bb is not None and p <= bb:
                         cum = 0
                         prev = None
@@ -258,14 +269,14 @@ def replay(tape: pd.DataFrame, grid_step_us: int) -> Replay:
                             if lp < p or cum >= q:
                                 break
                             if prev is not None and lp + 1 < prev:
-                                pm_ev.append(i); pm_sd.append(1); pm_px.append(lp + 1); pm_q.append(q - cum); pm_k.append(0)  # noqa: E702
+                                pm_ev.append(i); pm_sd.append(1); pm_px.append(lp + 1); pm_q.append(q - cum); pm_k.append(0); pm_j.append(-1)  # noqa: E702
                             ahead = ahead_of_user(bids[lp], last_tr_bid.get(lp), i)
                             if ahead is not None and q - cum - ahead > 0:
-                                pm_ev.append(i); pm_sd.append(1); pm_px.append(lp); pm_q.append(q - cum - ahead); pm_k.append(1)  # noqa: E702
+                                pm_ev.append(i); pm_sd.append(1); pm_px.append(lp); pm_q.append(q - cum - ahead); pm_k.append(1); pm_j.append(join_event(last_tr_bid.get(lp), i))  # noqa: E702
                             cum += btot[lp]
                             prev = lp
                         if cum < q and prev is not None and p < prev:
-                            pm_ev.append(i); pm_sd.append(1); pm_px.append(p); pm_q.append(q - cum); pm_k.append(2)  # noqa: E702
+                            pm_ev.append(i); pm_sd.append(1); pm_px.append(p); pm_q.append(q - cum); pm_k.append(2); pm_j.append(-1)  # noqa: E702
             opp_best = (apx[0] if apx else None) if s == 1 else (bpx[-1] if bpx else None)
             od_ts.append(ts)
             od_ev.append(i)
@@ -480,4 +491,5 @@ def replay(tape: pd.DataFrame, grid_step_us: int) -> Replay:
         pm_price=np.asarray(pm_px, dtype=i64),
         pm_qty=np.asarray(pm_q, dtype=i64),
         pm_kind=np.asarray(pm_k, dtype=np.int8),
+        pm_join=np.asarray(pm_j, dtype=i64),
     )

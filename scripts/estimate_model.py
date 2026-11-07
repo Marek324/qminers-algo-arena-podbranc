@@ -463,11 +463,11 @@ def main() -> None:
         log('computing the target PnL (S-aware reference market maker on fresh generated sessions)...')
         fit['target'] = compute_target(name, strategies=strategies, workers=args.workers, log=log)
 
-    (PARAM_DIR / f'{name}_fit.json').write_text(json.dumps(fit, indent=1))
+    (PARAM_DIR / f'{name}_fit.json').write_text(json.dumps(fit, indent=1, default=lambda o: o.item()))
     f = lambda v: '-' if v is None else (f'{v:,.0f}' if abs(v) >= 1000 else f'{v:.3g}')  # noqa: E731
     md = [f'# Generator fit: {name}', '', f'Fit error {fit["fit_error"]:.2f} (sum of |difference| / tolerance; ~1 per metric is a close fit).', '',
           '| metric | real | generated |', '|---|---|---|'] + [f'| {r["metric"]} | {f(r["real"])} | {f(r["generated"])} |' for r in rows]
-    md += ['', '## Parameters', '', '```json', json.dumps(asdict(p), indent=1), '```']
+    md += ['', '## Parameters', '', '```json', json.dumps(asdict(p), indent=1, default=lambda o: o.item()), '```']
     if 'target' in fit:
         tg = fit['target']
         md += ['', '## Target PnL', '', f'S-aware reference market maker: **{tg["target"]["mean_per_hour"]:,.0f} per hour** '

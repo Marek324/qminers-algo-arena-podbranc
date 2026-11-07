@@ -259,6 +259,24 @@ With our 5 ms latency, a strategy that cancels as soon as the first new order sh
 - **After a big jump, expect a quiet stretch.** The next 20-tick jump hasn't come sooner than 147s.
 - Between jumps the market is close to `round1`, so the `round1` quoting logic is still the base.
 
+### Two regimes
+
+The jumps sit inside **volatile spells**. The generator switches abruptly between two regimes, and new limit orders show which one is on. Per 2 s bin, mean new sell price − mean new buy price is 1.9–2.2 ticks in the quiet regime and 3.8–6.0 in the volatile one, with almost nothing between (`scripts/tape_events.py` replay).
+
+| | quiet (~84% of the time) | volatile (958 s of 6,000) |
+|---|---|---|
+| New sell − new buy price (median) | 2.0 | 4.0–4.3 |
+| IOC price vs mid, median | 1.0–1.5 | 2.0–2.5 |
+| IOCs per second | 7.4–8.5 | 11–14 |
+| Limit orders per second | ~180 | ~180 (unchanged) |
+| Mid vol, 1 s steps (ticks/√s) | 0.8–1.3 | 4–6 |
+| `imbalance_mm` PnL | +236k | −298k |
+
+- So X (and the IOC offset) roughly doubles, the IOC rate rises by half, and S moves 4–6× faster. The big jumps (+56 at 1,559 s, −92 at 3,872 s, …) fall in or right next to volatile spells. The spells last from a few seconds to several minutes (2,030–2,145 s, 3,630–3,700 s, 3,840–4,020 s).
+- **What a jump looks like** (+56 at 1,559.66 s): the ask side, already thin in the volatile spell, empties by timer cancels. New bids arrive clamped at best ask − 1, then the first new ask lands at 9,942 with the old best ask at 9,886. Old bids stay stranded 50 ticks below. There is almost nothing stale to buy (27 lots), so the jump pays only if the position is already on the right side. The clamped bids are the early sign, and a clamp-aware S estimate picks them up (`tools/clamped_ema.py`).
+- **Taking the stale book pays in both regimes.** At the onset of S − best ask ≥ th, buying at the ask 5 ms later gains, against the mid 1 s later: quiet +1.84 (th 1, 386 onsets), volatile +1.15 (th 1, 2,462) and +2.77 (th 2, 820). Resting orders in volatile spells lose at any distance from S, including first in queue inside the spread (offline: −0.7 to −6.6 ticks/lot).
+- The regime shows in the placement width within a few dozen orders (about 0.2 s), so it works as a live switch (`tools/regime_score.py`, used by `strategies/regime_mm.py`).
+
 ## What this means for strategies
 
 1. **`round1` is almost always at a 1-tick spread (93%).** There is no 2-tick spread to step inside. Making means joining the touch queue, or resting one tick behind it.

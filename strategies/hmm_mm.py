@@ -10,14 +10,19 @@ quotes earn the spread in quiet spells and get swept in volatile ones; taking th
    (soft EM, weight H_LR) from the start values H_N_Q0 / H_N_V0. Forward filter with switch probabilities
    H_PQV (quiet -> volatile) and H_PVQ per order gives p_vol.
 2. Hidden price: a 1-D Kalman filter. Between orders the variance grows by sigma^2 * dt, sigma mixed by p_vol
-   between SIG_Q and SIG_V. Each new order within KF_LEVELS ticks of its best price is a reading
+   between SIG_Q and SIG_V. Each new order within KF_LEVELS (volatile: KF_LEVELS_V) ticks of its best price is a reading
    price + c (bid) or price - c (ask); c (learned online per state) is the average distance of new orders from
    S_hat, and the reading noise comes from the state's geometric spread.
 3. Quiet (p_vol < P_ON): imbalance_mm. fair = mid + K_S * (S_hat - mid) + K_IMB * imbalance
    + K_FLOW * flow / depth - K_INV * inventory; cross at the opposite best price when fair is EDGE_TAKE through
    it, otherwise quote at the best price with EDGE to fair. Sticky orders, size capped by MAX_POS.
 4. Volatile: fair from the V_ settings. Cross (sweeping up to fair - V_EDGE_TAKE) when the book is stale.
-   No quote on the side that would grow |inventory|; the other side rests one exit order V_EXIT_EDGE from fair.
+   No quote on the side that would grow |inventory|; the other side rests one exit order V_EXIT_EDGE from fair
+   (100 = no exit order: pure taker, which was best on both halves of round 2).
+Off by default (no gain on round 2): Q_SWEEP (sweep in quiet), H_IOC (IOC gaps as a second HMM observation).
+
+Round 2 (round2_public): 502k with KF depth 1000; depth 4 in both regimes gave +26k on both halves.
+Tuned on the two halves of round2_public, keeping values both halves agree on; most settings sit on flat plateaus.
 
 Inventory is counted from fills only.
 """
@@ -52,6 +57,7 @@ class HmmMMStrategy(BaseStrategy):
     K_INV = 0.002
     K_S = 0.75
     K_FLOW = 0.8
+    Q_SWEEP = False      # quiet: when crossing, bid up to fair - EDGE_TAKE instead of only the best ask
     # volatile regime
     V_EDGE_TAKE = 0.55
     V_EXIT_EDGE = 100.0
@@ -66,10 +72,15 @@ class HmmMMStrategy(BaseStrategy):
     H_PVQ = 0.0003       # P(volatile -> quiet)
     H_LR = 0.0003        # soft-EM weight of each order in the state means
     H_NMAX = 20
+    H_IOC = False         # also feed the gaps between market IOCs to the HMM (exponential, rate learned per state)
+    H_IOC_RQ0 = 8.0      # start IOC rate (per s) in the quiet state
+    H_IOC_RV0 = 13.0     # and in the volatile state
+    H_IOC_LR = 0.003
     # Kalman filter for S
     SIG_Q = 0.5          # ticks / sqrt(s) in the quiet state
     SIG_V = 10.0          # in the volatile state
-    KF_LEVELS = 1000     # use new orders up to this many ticks behind their best price
+    KF_LEVELS = 4        # quiet: use new orders up to this many ticks behind their best price
+    KF_LEVELS_V = 4   # volatile: same
     C_LR = 0.0005        # weight of each order in the learned price-to-S gap c
     R_MIN = 0.1
     # flow
@@ -95,6 +106,10 @@ class HmmMMStrategy(BaseStrategy):
         self.pv = 0.0
         self.nq = self.H_N_Q0
         self.nv = self.H_N_V0
+        self.iq = self.H_IOC_RQ0
+        self.iv = self.H_IOC_RV0
+        self.ioc_t = 0
+        self.last_taker = ''
         # Kalman
         self.s = 0.0
         self.P = 1.0
@@ -159,6 +174,9 @@ class HmmMMStrategy(BaseStrategy):
         for tr in trades:
             if tr.taker_owner == 'market':
                 self.flow += tr.quantity if tr.book_side == 'ask' else -tr.quantity
+                if self.H_IOC and tr.taker_order_id != self.last_taker:
+                    self.last_taker = tr.taker_order_id
+                    self._observe_ioc(now)
         half = (bq + aq) / 2
         self.depth = half if self.depth == 0 else self.depth + self.DEPTH_EMA * (half - self.depth)
         x = self.flow / self.depth
@@ -170,7 +188,7 @@ class HmmMMStrategy(BaseStrategy):
         if self.pv < self.P_ON:
             fair = mid + self.K_S * (self.s - mid) + self.K_IMB * imb + self.K_FLOW * fx - self.K_INV * self.inv
             if fair - ba >= self.EDGE_TAKE:
-                pb = ba
+                pb = math.floor(fair - self.EDGE_TAKE) if self.Q_SWEEP else ba
             elif ba - bb >= 2 and fair - (bb + 1) >= self.EDGE_IN:
                 pb = bb + 1
             else:
@@ -178,7 +196,7 @@ class HmmMMStrategy(BaseStrategy):
                 while fair - pb < self.EDGE:
                     pb -= 1
             if bb - fair >= self.EDGE_TAKE:
-                pa = bb
+                pa = math.ceil(fair + self.EDGE_TAKE) if self.Q_SWEEP else bb
             elif ba - bb >= 2 and (ba - 1) - fair >= self.EDGE_IN:
                 pa = ba - 1
             else:
@@ -209,7 +227,7 @@ class HmmMMStrategy(BaseStrategy):
         else:
             self._clear(-1)
 
-    def _observe(self, sign: int, price: int, near: bool, now: int) -> None:
+    def _observe(self, sign: int, price: int, depth: int, now: int) -> None:
         """One new market limit order: HMM forward step, then (if near the touch) a Kalman update."""
         # HMM on the order's distance from the mid
         n = min(self.H_NMAX, max(0, round(2 * (sign * (price - self.mid) - 0.5))))
@@ -226,7 +244,7 @@ class HmmMMStrategy(BaseStrategy):
         self.nv += lr * pv * (n - self.nv)
         if self.nv < self.nq + 0.5:
             self.nv = self.nq + 0.5
-        if not near:
+        if depth > (self.KF_LEVELS_V if pv >= self.P_ON else self.KF_LEVELS):
             return
         # Kalman: predict
         dt = (now - self.kf_t) / 1e6
@@ -244,6 +262,23 @@ class HmmMMStrategy(BaseStrategy):
         self.s += k * (y - self.s)
         self.P *= 1.0 - k
 
+    def _observe_ioc(self, now: int) -> None:
+        """A new market IOC: the gap since the previous one is evidence for the regime."""
+        if self.ioc_t:
+            g = min(5.0, (now - self.ioc_t) / 1e6)
+            lq = self.iq * math.exp(-self.iq * g)
+            lv = self.iv * math.exp(-self.iv * g)
+            pv = self.pv
+            a = pv * lv
+            pv = a / (a + (1.0 - pv) * lq)
+            self.pv = pv
+            # learn the rates: running mean of the gap per state
+            mq = 1.0 / self.iq + self.H_IOC_LR * (1.0 - pv) * (g - 1.0 / self.iq)
+            mv = 1.0 / self.iv + self.H_IOC_LR * pv * (g - 1.0 / self.iv)
+            self.iq = 1.0 / max(mq, 0.01)
+            self.iv = max(self.iq * 1.05, 1.0 / max(mv, 0.01))
+        self.ioc_t = now
+
     def _scan_new(self, views, sign: int, now: int) -> None:
         """Feed market orders newer than max_id to the filters."""
         first = views[0].price
@@ -255,7 +290,7 @@ class HmmMMStrategy(BaseStrategy):
                 continue
             oid = o.order_id
             if len(oid) > lm or (len(oid) == lm and oid > mx):
-                self._observe(sign, o.price, (o.price - first) * sign <= self.KF_LEVELS, now)
+                self._observe(sign, o.price, (o.price - first) * sign, now)
                 if len(oid) > len(new_max) or (len(oid) == len(new_max) and oid > new_max):
                     new_max = oid
         self.max_id = new_max

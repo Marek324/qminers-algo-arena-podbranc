@@ -12,3 +12,5 @@ logs/*
 !logs/.gitkeep
 
 .DS_Store
+# Private analysis findings (fitted generator values), never commit
+findings/

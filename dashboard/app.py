@@ -23,6 +23,7 @@ from plotly.subplots import make_subplots
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import analysis_tab  # noqa: E402
 import engine  # noqa: E402
+import strategy_view  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_FILE = 'sample_v2.csv'  # opened first when it is in data/ (unzip data/sample_v2.csv.gz)
@@ -65,6 +66,8 @@ CSS = f"""<style>
   background: linear-gradient(to left, var(--c) var(--w, 0%), transparent var(--w, 0%)); }}
 .lorders.ask .lord {{ --c: rgba(239,83,80,.15); }} .lorders.bid .lord {{ --c: rgba(38,166,154,.15); }}
 .lord span:first-child {{ text-align: left; }}
+.lord.mine {{ color: #4fb3d9; font-weight: 700; opacity: 1; }}
+.lrow .mine {{ color: #4fb3d9; }}
 .lspread {{ text-align: center; opacity: .75; padding: 3px 0; margin: 2px 0; border-top: 1px solid rgba(128,128,128,.3);
   border-bottom: 1px solid rgba(128,128,128,.3); }}
 </style>"""
@@ -187,6 +190,19 @@ def on_trade_jump(direction: int) -> None:
         k = int(np.searchsorted(r.t_ev, pos, side='left')) - 1
         if k >= 0:
             set_pos(int(r.t_ev[k]))
+
+
+def on_mine_jump(kind: str, direction: int) -> None:
+    """Jump to the previous/next row where the strategy acted ('action') or got filled ('fill')."""
+    rows = st.session_state.get('_mine', {}).get(kind)
+    if rows is None or not len(rows):
+        return
+    pos = st.session_state['pos']
+    k = int(np.searchsorted(rows, pos, side='right' if direction > 0 else 'left'))
+    k = k if direction > 0 else k - 1
+    if 0 <= k < len(rows):
+        set_pos(int(rows[k]))
+        st.session_state['playing'] = False
 
 
 # ---------------------------------------------------------------- binning (numpy only)
@@ -486,10 +502,14 @@ def ladder_html(book: engine.Book, bids: list, asks: list, n: int, expand: bool,
         p, v, c = lv
         orders = book.level_orders(0 if kind == 'bid' else 1, p)
         omx = max((q for _, q in orders), default=1)
-        lines = ''.join(f'<div class="lord" style="--w:{100 * q / omx:.1f}%"><span>{j + 1}.{" next to trade" if j == 0 else ""}</span>'
-                        f'<span>{q:,} lots</span><span>{f"#{oid}" if ids else ""}</span></div>' for j, (oid, q) in enumerate(orders))
+        lines = ''.join(f'<div class="lord{" mine" if isinstance(oid, str) else ""}" style="--w:{100 * q / omx:.1f}%"><span>{j + 1}.'
+                        f'{" YOU" if isinstance(oid, str) else ""}{" next to trade" if j == 0 else ""}</span>'
+                        f'<span>{q:,} lots</span><span>{oid if isinstance(oid, str) else (f"#{oid}" if ids else "")}</span></div>'
+                        for j, (oid, q) in enumerate(orders))
+        yours = sum(q for oid, q in orders if isinstance(oid, str))
+        mark = f' <span class="mine" title="your lots at this price">&#9679;{yours:,}</span>' if yours else ''
         return (f'<details class="lvl"{" open" if expand else ""}><summary class="lrow {kind}{" best" if best else ""}" style="--w:{100 * v / mx:.1f}%">'
-                f'<span>{p:,}</span><span>{v:,}</span><span>{c} &#9662;</span></summary><div class="lorders {kind}">{lines}</div></details>')
+                f'<span>{p:,}</span><span>{v:,}{mark}</span><span>{c} &#9662;</span></summary><div class="lorders {kind}">{lines}</div></details>')
 
     out = ['<div class="ladder"><div class="lrow lhead"><span>Price</span><span>Lots</span><span>Orders</span></div>',
            '<div class="lsec ask">Waiting to SELL (asks) &uarr; cheapest at the bottom</div>']
@@ -696,8 +716,19 @@ def view(r: engine.Replay, source: str, opts: dict) -> None:
         for col, (label, fn, args, tip) in zip(b, moves):
             col.button(label, on_click=fn, args=args, help=tip, width='stretch', key=f'mv{label}')
 
+    run = opts.get('run')
+    if run is not None:
+        ss['_mine'] = strategy_view.jump_targets(run)
+        jb = st.columns([1.3, 1, 1, 1, 1, 3], vertical_alignment='center')
+        jb[0].markdown(f'**{run.strategy_name}** <span class="muted">replayed with your orders</span>', unsafe_allow_html=True)
+        for col, (label, kind, d, tip) in zip(jb[1:5], [('‹ My action', 'action', -1, 'Previous row where the strategy sent/cancelled/shrank'),
+                                                       ('My action ›', 'action', 1, 'Next row where the strategy sent/cancelled/shrank'),
+                                                       ('‹ My fill', 'fill', -1, 'Previous fill of one of your orders'),
+                                                       ('My fill ›', 'fill', 1, 'Next fill of one of your orders')]):
+            col.button(label, on_click=on_mine_jump, args=(kind, d), help=tip, width='stretch', key=f'mine{label}')
+
     # ---- 2. the market right now, in plain words
-    book = engine.book_at(r, pos)
+    book = run.book_at(pos) if run is not None else engine.book_at(r, pos)
     bids, asks = book.levels()
     k = engine.trade_count_through(r, pos)
     cur = engine.counters_at(r, pos)
@@ -717,6 +748,8 @@ def view(r: engine.Replay, source: str, opts: dict) -> None:
         cards.append(card('Last trade', '-', 'no trades yet'))
     total_q = r.cum_qty[:, k].sum()
     cards.append(card('Traded so far', f'{int(total_q):,} lots', f'in {int(r.cum_cnt[:, k].sum()):,} trades'))
+    if run is not None:
+        cards += [card(*c_) for c_ in strategy_view.cards(run, pos, t)]
     st.markdown(f'<div class="cards">{"".join(cards)}</div>', unsafe_allow_html=True)
 
     # ---- 3. chart controls
@@ -759,8 +792,10 @@ def view(r: engine.Replay, source: str, opts: dict) -> None:
     # ---- 4. chart + order book
     left, right = st.columns([3, 1])
     with left:
-        st.plotly_chart(main_fig(r, mid, x0, x1, t, bw, cand_src, show_ba, hrs, f'{source}|{win_name}|{custom}', show_trades), width='stretch',
-                        config=PLOT_CONFIG, theme='streamlit', key='main')
+        fig_main = main_fig(r, mid, x0, x1, t, bw, cand_src, show_ba, hrs, f'{source}|{win_name}|{custom}', show_trades)
+        if run is not None:
+            strategy_view.add_fills_to_chart(fig_main, run, x0, x1, ts, fmt_t, hrs, t)
+        st.plotly_chart(fig_main, width='stretch', config=PLOT_CONFIG, theme='streamlit', key='main')
         st.markdown(f'<div class="legend"><span><i style="background:{UP}"></i>price went up / buyers pushed</span>'
                     f'<span><i style="background:{DOWN}"></i>price went down / sellers pushed</span>'
                     f'<span><i class="line"></i>now</span><span><i style="background:rgba(128,128,128,.35)"></i>not happened yet</span>'
@@ -777,8 +812,21 @@ def view(r: engine.Replay, source: str, opts: dict) -> None:
         st.markdown(ladder_html(book, bids, asks, opts['levels'], expand, opts['ids']), unsafe_allow_html=True)
         st.caption('Click a price to list its orders.')
 
+    # ---- 4b. the strategy at this moment
+    if run is not None:
+        with st.container(border=True):
+            strategy_view.thinking_panel(run, pos, tp, fmt_t, hrs)
+            strategy_view.state_chart(run, x0, x1, t, ts, style_time_axes, cursor_shapes, hrs, 'stv')
+
     # ---- 5. details
-    tabs = st.tabs(['Recent trades', 'What happened (event log)', 'Order book depth', 'Order types', 'Totals'])
+    names = ['Recent trades', 'What happened (event log)', 'Order book depth', 'Order types', 'Totals']
+    if run is not None:
+        names = ['Strategy run'] + names
+    tabs = st.tabs(names)
+    if run is not None:
+        with tabs[0]:
+            strategy_view.summary(run, opts.get('theo_max'))
+        tabs = tabs[1:]
     with tabs[0]:
         st.caption('The last 50 trades up to now, newest first. BUY = a buyer took a resting sell order; SELL = the other way round.')
         trades_table(r, k, hrs, opts['ids'])
@@ -830,6 +878,14 @@ else:
     st.info('Put a CSV in data/ or upload one in the sidebar.')
     st.stop()
 
+with st.sidebar:
+    strategy_run_ = strategy_view.sidebar(csv_path, source, replay_.tape)
+theo_max = None
+if strategy_run_ is not None:
+    replay_ = strategy_run_.replay
+    saved = analysis_tab.saved_report(csv_path, fname) if csv_path is not None else None
+    theo_max = ((saved or {}).get('max_pnl') or {}).get('theoretical_max', {}).get('pnl')
+
 if st.session_state.get('_src') != source:
     st.session_state.update(_src=source, pos=0, playing=False, _nav_last=None)
 # Streamlit keeps a tab's state when the app code is reloaded, so a tab that was playing would carry on by itself: pause instead.
@@ -848,7 +904,7 @@ if tpe.time_fixed:
 if replay_.dups:
     st.warning(f'{replay_.dups} inserts reused a live order id (the simulator would raise).')
 
-options = dict(levels=int(levels), log_half=int(log_half), ids=ids)
+options = dict(levels=int(levels), log_half=int(log_half), ids=ids, run=strategy_run_, theo_max=theo_max)
 replay_tab, analysis_view = st.tabs(['Replay', 'Analysis'])
 with replay_tab:
     st.fragment(view, run_every=0.8 if st.session_state.get('playing') else None)(replay_, source, options)

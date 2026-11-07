@@ -35,6 +35,29 @@ Trades are not in the CSV. `dashboard/engine.py` replays the tape with the simul
 
 The replay is cached and keeps a full-book checkpoint every few thousand events, so the book at any moment is rebuilt quickly. A 3M-row file loads in a few seconds.
 
+## Strategy replay
+Pick a file from `strategies/` in the sidebar (**Strategy**). The dashboard runs it through the real simulator with the scoring settings
+(5 ms latency, |inventory| 100 penalty, 1000-lot order limit; the score matches `exchange-simulator` exactly) and replays the market
+**with your orders in it**: the order book is the true one, your orders are marked in their queues (● in the ladder, "YOU" when expanded),
+and the market reacts mechanically to what you take and post. The run takes about as long as a backtest and is cached per strategy file,
+CSV and parameter set.
+
+- **Cards:** your inventory, resting lots, PnL now and fills so far.
+- **Chart:** your fills (filled circles; hollow and faded = not happened yet).
+- **‹ My action / My action ›, ‹ My fill / My fill ›:** jump between the rows where the strategy acted or got filled.
+- **What it is thinking:** every number/bool/short value on the strategy object at that moment, plus anything it puts in a
+  `self.debug` dict (e.g. `self.debug = {'forecast': f, 'reason': 'skew bid'}`); ▲▼ = changed since the previous capture. State is captured
+  whenever the strategy acts and otherwise every 50 ms of market time.
+- **What it did:** its sends, cancels and shrinks, and the exchange's replies (accepted, fills, cancels, rejects), newest first.
+- **Plot strategy values:** inventory, PnL and any of its values over the chart window. The **Strategy run** tab has the score card
+  (`result.json`, with the share of the theoretical max when the analysis has been run).
+
+### Tuning parameters
+**Parameters** in the sidebar lists the strategy's UPPERCASE number/bool constants, both module-level (`NAME = 1`) and inside the class
+(`    NAME = 1`, marked "(class)"), with their trailing `# comment` as help. Change values and press **Run**: a fresh copy of the module is
+loaded with the new values in memory, so the strategy file is never written. Changed values are listed as code to paste back into the
+file by hand; **Reset** returns to the file's values. A constant computed from another constant when the file loads keeps its file value.
+
 ## Analysis tab
 Opens with a short overview: six key numbers, four verdict cards (market making, direction, regime, risks; green / orange / red), the session chart, and three small charts (maker markout, top predictors of the 5 s move, fill probability by order placement). Below it a switcher opens one detailed section at a time: **Market & book**, **Flow & execution**, **Signals** (book signals and technical indicators), **PnL bounds** (theoretical max and min) and **Data** (series explorer, raw report and downloads). Only the chosen section is drawn, so the page stays fast.
 

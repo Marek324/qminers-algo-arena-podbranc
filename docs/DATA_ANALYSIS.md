@@ -283,3 +283,20 @@ With our 5 ms latency, a strategy that cancels as soon as the first new order sh
 - The size fit in the forensics report reports a maximum of 997, which contradicts the verified maximum of 124,248. The exact size family is open.
 - The markout and queue analysis was done on `sample_v2` only.
 - No numbers here come from a backtest. "456k PnL" (a hindsight best case) and "$60–80k" (a rough calculation) from the reports are not achievable estimates.
+
+---
+
+## Private Evaluation Tape (12,000s Sandbox Reconstruction)
+
+From official arena sandbox evaluation outputs (`docs/results (2)` and `docs/results`), the private competition dataset (`/work/backtest.csv`, 12,000 seconds = 3.33 hours) was reverse engineered via mark-to-market PnL decomposition:
+
+- **Full Report**: [docs/EVALUATION_DATASET_ANALYSIS.md](EVALUATION_DATASET_ANALYSIS.md)
+- **High-Res Visualizations**: [data_visualization/results2_market_reconstruction.png](../data_visualization/results2_market_reconstruction.png)
+- **Key Parameters Inferred**:
+  - **Duration**: 12,000.0s (3.33 hr).
+  - **Calm Diffusion**: $\sigma = 1.483\text{ ticks}/\sqrt{\text{s}}$ (exact match with `round2_public`).
+  - **Variance Decomposition**: 51.27% of total variance is discontinuous jumps; 48.73% is continuous diffusion.
+  - **Jump Distribution**: Extreme heavy-tailed power law (Student-t $\text{df} = 0.94$). Gaussian/Merton jump-diffusion is rejected ($p = 0.0000$).
+  - **Jump Clustering**: Inter-arrival dispersion ($1.89 > 1.0$) confirms Hawkes-like self-exciting volatility bursts.
+  - **Major Jumps**: 51 jumps $\ge 20\text{ ticks}$ across the 12,000s session ($0.26/\text{min}$).
+

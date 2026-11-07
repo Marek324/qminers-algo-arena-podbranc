@@ -63,6 +63,7 @@ uv run exchange-simulator --strategy strategies/<mine>.py --backtest data/<file>
 uv run backtest-explorer --log-dir logs/<run>    # needs a full-logs run
 ```
 
+- Analyze a tape before writing a strategy: `uv run analysis.py data/<file>.csv` writes `logs/analysis/<file>.json` and `.txt`. Report contents and schema: [docs/ANALYSIS.md](docs/ANALYSIS.md).
 - The score is `pnl` in `logs/<run>/result.json`. Also check `breach_penalty` (should be 0) and the `abs_inventory_q*` quantiles.
 - `data/sample.csv` is synthetic and trends. The real rounds are recorded market data and look nothing like it, so don't tune to the sample.
 - Before submitting, check the file only uses allowed imports and builtins, then run a full backtest of that exact file.

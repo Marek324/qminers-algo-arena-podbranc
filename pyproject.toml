@@ -1,0 +1,39 @@
+[project]
+name = "qminers-algo-arena"
+version = "0.1.0"
+description = "Qminers trading hackathon starter: write a strategy, backtest it, explore the run"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "pydantic>=2.8.0",
+    # Available to strategies in the evaluation sandbox; pinned so every run sees the same versions.
+    "numpy==2.5.4",
+    "pandas==3.0.6",
+    "scipy==1.18.1",
+    "scikit-learn==1.9.1",
+    # The backtest explorer.
+    "dash>=4.3.0",
+    "plotly>=6.8.0",
+    "plotly-resampler>=0.11.0",
+    # Imported by plotly-resampler, which does not declare it; pandas 3 stopped pulling it in.
+    "pytz>=2026.3.post1",
+]
+
+[project.scripts]
+exchange-simulator = "simulator.main:main"
+backtest-explorer = "explorer.main:main"
+
+[tool.uv]
+package = true
+# Path-based .pth editable install, so pyright and IDEs resolve `simulator` and `explorer`.
+config-settings = { editable_mode = "compat" }
+
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["simulator*", "explorer*"]
+
+[tool.setuptools.package-data]
+explorer = ["assets/*"]

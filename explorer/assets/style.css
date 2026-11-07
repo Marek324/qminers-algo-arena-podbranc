@@ -1,0 +1,172 @@
+/* Invisible scrollbars globally; scrolling itself stays active */
+::-webkit-scrollbar { display: none !important; }
+* { -ms-overflow-style: none !important; scrollbar-width: none !important; }
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #0d1117;
+  color: #ffffff;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  overflow: hidden;
+}
+
+.app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding: 10px;
+  box-sizing: border-box;
+  gap: 10px;
+}
+
+.top-row {
+  display: flex;
+  flex-direction: row;
+  height: 58%;
+  width: 100%;
+  gap: 10px;
+}
+
+.bottom-row {
+  display: flex;
+  flex-direction: row;
+  height: 40%;
+  width: 100%;
+  gap: 10px;
+}
+
+.chart-container {
+  height: 100%;
+  background: #161b22;
+  border-radius: 5px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.spread-panel { width: 65%; }
+.ladder-panel { width: 35%; }
+
+.pnl-panel {
+  flex: 3;
+  height: 100%;
+  overflow: auto;
+}
+
+.events-panel {
+  flex: 6;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.event-log {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.filter-bar {
+  display: flex;
+  gap: 10px;
+  padding: 10px;
+  background-color: #161b22;
+  border-bottom: 1px solid #30363d;
+}
+
+.filter-source { width: 132px; }
+.filter-side   { width: 114px; }
+.filter-op     { width: 140px; }
+
+/* Topbar */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background-color: #161b22;
+  border-radius: 5px;
+  padding: 10px 16px;
+}
+
+.topbar-title      { font-size: 1.4em; font-weight: bold; white-space: nowrap; }
+.topbar-item       { border: 1px solid #ffffff33; border-radius: 12px; padding: 4px 12px; white-space: nowrap; font-size: 0.7em; }
+.topbar-label      { font-weight: bold; }
+.topbar-pnl        { margin-left: auto; font-weight: bold; font-size: 1em; }
+.topbar-pnl-positive { color: #7CFC9C; }
+.topbar-pnl-negative { color: #FF9C9C; }
+
+/* Dark values for Dash 4's built-in design tokens, which default to a
+   light theme at :root and drive the dcc.Dropdown menu colors. */
+:root {
+  --Dash-Stroke-Strong: #30363d;
+  --Dash-Stroke-Weak: #21262d;
+  --Dash-Fill-Interactive-Strong: #58a6ff;
+  --Dash-Fill-Interactive-Weak: rgba(88, 166, 255, 0.1);
+  --Dash-Fill-Inverse-Strong: #161b22;
+  --Dash-Text-Primary: #c9d1d9;
+  --Dash-Text-Strong: #e6edf3;
+  --Dash-Text-Weak: #8b949e;
+  --Dash-Text-Disabled: #6e7681;
+  --Dash-Fill-Primary-Hover: rgba(177, 186, 196, 0.08);
+  --Dash-Fill-Primary-Active: rgba(177, 186, 196, 0.12);
+  --Dash-Fill-Disabled: rgba(110, 118, 129, 0.25);
+}
+
+/* Event-log filter dropdowns (Dash 4 dcc.Dropdown, Radix-based).
+   The options menu portals to <body>, so the menu rules below can't be
+   scoped under .filter-dropdown — they theme every dcc.Dropdown menu. */
+.filter-dropdown.dash-dropdown {
+  background-color: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 5px;
+  color: #e6edf3;
+  cursor: pointer;
+}
+
+.filter-dropdown.dash-dropdown:hover,
+.filter-dropdown.dash-dropdown:focus,
+.filter-dropdown.dash-dropdown[data-state="open"] {
+  border-color: #58a6ff;
+  outline: none;
+  box-shadow: none;
+}
+
+.filter-dropdown .dash-dropdown-trigger-icon {
+  color: #8b949e;
+}
+
+.dash-dropdown-content {
+  background-color: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 5px;
+  color: #e6edf3;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.dash-dropdown-search {
+  background-color: #0d1117;
+  border: 1px solid #30363d;
+  color: #e6edf3;
+}
+
+.dash-dropdown-search::placeholder { color: #8b949e; }
+.dash-dropdown-search-icon        { color: #8b949e; }
+
+.dash-dropdown-option {
+  color: #e6edf3;
+  cursor: pointer;
+}
+
+/* !important: Dash's own ":hover / :focus-within" rule recolors option
+   text with the interactive token and outspecifies plain classes. */
+.dash-dropdown-option:hover {
+  background-color: #1f6feb33;
+  color: #ffffff !important;
+}
+
+.dash-dropdown-option.selected {
+  background-color: #1f6feb;
+  color: #ffffff !important;
+}
+
+.dash-options-list-option-checkbox { accent-color: #1f6feb; }

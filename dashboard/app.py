@@ -1,10 +1,11 @@
-"""Streamlit viewer for raw market-data CSVs (tape): candles, trades, order book and breakdowns over time.
+"""Streamlit dashboard for raw market-data CSVs (tape): candles, trades, order book and breakdowns over time.
 
-Run:  uv run --with streamlit streamlit run viewer/app.py
+Run:  uv run --with streamlit streamlit run dashboard/app.py
 """
 
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import io
 import sys
@@ -36,8 +37,17 @@ CSS = f"""<style>
 [data-testid="stMetricValue"] {{ font-size: 1.3rem; }}
 .ttl {{ font-size: 1.15rem; font-weight: 600; margin-right: .8rem; }}
 .muted {{ opacity: .6; font-size: .85rem; }}
-.tread {{ font: 600 2rem/1.1 ui-monospace, SFMono-Regular, monospace; text-align: right; }}
-.tsub {{ opacity: .6; font-size: .8rem; text-align: right; }}
+.tread {{ font: 700 2.2rem/1.1 ui-monospace, SFMono-Regular, monospace; }}
+.cards {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .6rem; margin: .4rem 0 .8rem; }}
+.card {{ border: 1px solid rgba(128,128,128,.25); border-radius: .5rem; padding: .5rem .75rem; }}
+.clabel {{ font-size: .78rem; opacity: .65; text-transform: uppercase; letter-spacing: .03em; }}
+.cvalue {{ font-size: 1.45rem; font-weight: 700; line-height: 1.3; }}
+.csub {{ font-size: .78rem; opacity: .65; }}
+.legend {{ display: flex; flex-wrap: wrap; gap: .4rem 1.2rem; font-size: .82rem; margin: -.4rem 0 .6rem; }}
+.legend i {{ display: inline-block; width: .8rem; height: .8rem; border-radius: 2px; margin-right: .35rem; vertical-align: -1px; }}
+.legend i.line {{ width: 1.2rem; height: 0; border-top: 2px dashed {ACCENT}; border-radius: 0; vertical-align: 3px; }}
+.lsec {{ font-size: .75rem; font-weight: 600; padding: 4px 8px 2px; }}
+.lsec.ask {{ color: {DOWN}; }} .lsec.bid {{ color: {UP}; }}
 .ladder {{ font-family: ui-monospace, SFMono-Regular, monospace; font-size: .85rem; }}
 .lrow {{ display: grid; grid-template-columns: 1.2fr 1fr .6fr; text-align: right; padding: 1px 8px; --c: transparent;
   background: linear-gradient(to left, var(--c) var(--w, 0%), transparent var(--w, 0%)); }}
@@ -49,7 +59,7 @@ CSS = f"""<style>
   border-bottom: 1px solid rgba(128,128,128,.3); }}
 </style>"""
 
-st.set_page_config(page_title='Market viewer', layout='wide')
+st.set_page_config(page_title='Market dashboard', layout='wide')
 
 
 # ---------------------------------------------------------------- loading (cached)
@@ -98,12 +108,51 @@ def set_pos(pos: int) -> None:
     st.session_state['pos'] = int(min(max(pos, 0), st.session_state['_r'].n - 1))
 
 
+def pos_at(sec: float) -> int:
+    """Last event at or before `sec` (the state of the market at that moment)."""
+    return int(np.searchsorted(st.session_state['_r'].tape.time, sec + 1e-9, side='right')) - 1
+
+
 def on_slider() -> None:
-    set_pos(int(np.searchsorted(st.session_state['_r'].tape.time, st.session_state['tslider'], side='right')) - 1)
+    set_pos(pos_at(from_dt(st.session_state['tslider'])))
 
 
-def on_step(sign: int) -> None:
-    set_pos(st.session_state['pos'] + sign * (st.session_state.get('stepsize') or 1))
+def on_step(events: int) -> None:
+    set_pos(st.session_state['pos'] + events)
+
+
+def on_time_step(sec: float) -> None:
+    """Move by `sec` seconds of market time; always moves at least one event so a button press is never a no-op."""
+    tp = st.session_state['_r'].tape
+    pos = st.session_state['pos']
+    new = pos_at(float(tp.time[pos]) + sec)
+    set_pos(max(new, pos + 1) if sec > 0 else min(new, pos - 1))
+
+
+def on_edge(end: bool) -> None:
+    set_pos(st.session_state['_r'].n - 1 if end else 0)
+    st.session_state['playing'] = False
+
+
+def parse_time(text: str) -> float | None:
+    """'12:30', '1:02:03.5', '754.2' -> seconds; None if it can't be read."""
+    try:
+        sec = 0.0
+        for part in text.strip().split(':'):
+            sec = sec * 60 + float(part)
+        return sec
+    except ValueError:
+        return None
+
+
+def on_jump() -> None:
+    text = st.session_state.get('jumpto', '')
+    sec = parse_time(text) if text.strip() else None
+    if sec is None:
+        st.session_state['_jump_err'] = text
+    else:
+        set_pos(max(pos_at(sec), 0))
+        st.session_state['playing'] = False
 
 
 def on_goto() -> None:
@@ -167,6 +216,25 @@ def ts1(sec: float) -> str:
     return str(ts(sec))
 
 
+EPOCH = dt.datetime(1970, 1, 1)
+
+
+def to_dt(sec: float) -> dt.datetime:
+    """Session seconds as a datetime, so the time slider can show clock time instead of raw seconds."""
+    return EPOCH + dt.timedelta(milliseconds=round(sec * 1000))
+
+
+def from_dt(v: dt.datetime) -> float:
+    return (v - EPOCH).total_seconds()
+
+
+def nav_seconds(v) -> float:
+    """A navigator selection x value (a date string such as '1970-01-01 00:01:17.72', or epoch ms) as session seconds."""
+    if isinstance(v, (int, float)):
+        return float(v) / 1000
+    return (np.datetime64(str(v).replace(' ', 'T'), 'us') - np.datetime64('1970-01-01T00:00:00', 'us')) / np.timedelta64(1, 's')
+
+
 SPIKE = dict(showspikes=True, spikemode='across', spikesnap='cursor', spikethickness=1, spikedash='solid', spikecolor='rgba(128,128,128,0.6)')
 
 # Middle mouse button drag pans any Plotly chart on the page. Plotly's drag box pans when a drag starts with Shift held,
@@ -186,6 +254,23 @@ if (!w.__middlePan) {
       screenX: e.screenX, screenY: e.screenY, button: 0, buttons: 1, shiftKey: !inPan});
     ev.__synthetic = true;
     drag.dispatchEvent(ev);
+  }, true);
+  // The whole-session strip is in drag-to-select mode, where Plotly reports no plain click. Replay a click there as a tiny
+  // drag; the app treats a very narrow selection as "jump here".
+  let lastClick = 0, downX = null;
+  doc.addEventListener('mousedown', e => { if (!e.__synthetic && e.button === 0) downX = e.clientX; }, true);
+  doc.addEventListener('click', e => {
+    // a real drag also ends in a click event: only a press and release in the same spot is a click
+    if (e.__synthetic || Date.now() - lastClick < 400 || downX === null || Math.abs(e.clientX - downX) > 3) return;
+    const drag = e.target.closest && e.target.closest('.nsewdrag');
+    const gd = drag && drag.closest('.js-plotly-plot');
+    if (!gd || !gd._fullLayout || gd._fullLayout.dragmode !== 'select') return;
+    lastClick = Date.now();
+    const mk = (type, x, target) => {
+      const ev = new w.MouseEvent(type, {bubbles: true, cancelable: true, view: w, clientX: x, clientY: e.clientY, button: 0, buttons: type === 'mouseup' ? 0 : 1});
+      ev.__synthetic = true; target.dispatchEvent(ev);
+    };
+    setTimeout(() => { mk('mousedown', e.clientX - 6, drag); mk('mousemove', e.clientX + 6, doc); mk('mouseup', e.clientX + 6, doc); }, 0);
   }, true);
   doc.addEventListener('auxclick', e => { if (e.button === 1 && e.target.closest && e.target.closest('.nsewdrag')) e.preventDefault(); }, true);
 }
@@ -209,7 +294,7 @@ def cursor_shapes(t: float, x1: float | None) -> list[dict]:
 
 
 def main_fig(r: engine.Replay, mid: np.ndarray, x0: float, x1: float, t: float, bw: float, cand_src: str, show_ba: bool, hrs: bool,
-             revision: str) -> go.Figure:
+             revision: str, show_trades: bool = False) -> go.Figure:
     tm = r.tape.time
     base = np.floor(x0 / bw) * bw
     nb = int(np.ceil((x1 - base) / bw)) + 1
@@ -279,7 +364,8 @@ def main_fig(r: engine.Replay, mid: np.ndarray, x0: float, x1: float, t: float, 
                                      hovertemplate='%{x}<br>' + name + ' %{y:,}<extra></extra>'), row=1, col=1)
 
     # trade markers
-    sel = np.arange(a, b)
+    # Off by default: the candles and volume bars already aggregate the trades (and their hovers list them).
+    sel = np.arange(a, b) if show_trades else np.arange(0)
     capped = len(sel) > MAX_MARKERS  # a busy window would bury the candles under markers, so they appear only once zoomed in
     if capped:
         sel = sel[:0]
@@ -320,7 +406,7 @@ def main_fig(r: engine.Replay, mid: np.ndarray, x0: float, x1: float, t: float, 
                       hovermode='closest', hoverdistance=30, spikedistance=-1, uirevision=revision, shapes=cursor_shapes(t, x1),
                       legend=dict(orientation='h', y=1.0, x=0, yanchor='bottom', font_size=11))
     if capped:
-        fig.add_annotation(text=f'{b - a:,} trades in view: trade markers hidden, pick a shorter window', xref='paper', yref='paper', x=1, y=1.0, yanchor='bottom', xanchor='right', showarrow=False,
+        fig.add_annotation(text=f'{b - a:,} trades in view: trade arrows hidden, pick a shorter window', xref='paper', yref='paper', x=1, y=1.0, yanchor='bottom', xanchor='right', showarrow=False,
                            font=dict(size=10), opacity=0.6)
     return fig
 
@@ -330,6 +416,7 @@ def nav_fig(nx: np.ndarray, ny: np.ndarray, x0: float, x1: float, t: float, hrs:
                                marker=dict(size=7, opacity=0), selected=dict(marker=dict(opacity=0)), unselected=dict(marker=dict(opacity=0)),
                                hovertemplate='%{x}<br>mid %{y:,.1f}<br>click to jump here<extra></extra>'))
     fig.update_layout(height=110, margin=dict(l=10, r=60, t=4, b=24), paper_bgcolor=CLEAR, plot_bgcolor=CLEAR, showlegend=False, uirevision='nav',
+                      dragmode='select', selectdirection='h', hovermode='x', clickmode='event+select', newselection=dict(line=dict(color=ACCENT, width=1)),
                       shapes=[dict(type='rect', xref='x', yref='paper', x0=ts1(x0), x1=ts1(x1), y0=0, y1=1, fillcolor='rgba(245,197,66,0.15)', line_width=0),
                               dict(type='line', xref='x', yref='paper', x0=ts1(t), x1=ts1(t), y0=0, y1=1, line=dict(color=ACCENT, width=1.5))])
     style_time_axes(fig, hrs, fixedrange=True)
@@ -381,13 +468,15 @@ def ladder_html(bids: list, asks: list, n: int) -> str:
         p, v, c = lv
         return f'<div class="lrow {kind}{" best" if best else ""}" style="--w:{100 * v / mx:.1f}%"><span>{p:,}</span><span>{v:,}</span><span>{c}</span></div>'
 
-    out = ['<div class="ladder"><div class="lrow lhead"><span>Price</span><span>Lots</span><span>Orders</span></div>']
-    out += [row('ask', lv, j == len(a) - 1) for j, lv in enumerate(reversed(a))] if a else ['<div class="lspread">no asks</div>']
+    out = ['<div class="ladder"><div class="lrow lhead"><span>Price</span><span>Lots</span><span>Orders</span></div>',
+           '<div class="lsec ask">Waiting to SELL (asks) &uarr; cheapest at the bottom</div>']
+    out += [row('ask', lv, j == len(a) - 1) for j, lv in enumerate(reversed(a))] if a else ['<div class="lspread">nobody is selling</div>']
     if a and b:
-        out.append(f'<div class="lspread">spread {asks[0][0] - bids[0][0]:,} &middot; mid {(asks[0][0] + bids[0][0]) / 2:,.1f}</div>')
+        out.append(f'<div class="lspread">gap (spread) {asks[0][0] - bids[0][0]:,} &middot; mid {(asks[0][0] + bids[0][0]) / 2:,.1f}</div>')
     else:
         out.append('<div class="lspread">&nbsp;</div>')
-    out += [row('bid', lv, j == 0) for j, lv in enumerate(b)] if b else ['<div class="lspread">no bids</div>']
+    out += [row('bid', lv, j == 0) for j, lv in enumerate(b)] if b else ['<div class="lspread">nobody is buying</div>']
+    out.append('<div class="lsec bid">Waiting to BUY (bids) &darr; highest at the top</div>')
     return ''.join(out) + '</div>'
 
 
@@ -477,6 +566,32 @@ def order_flow(cur: np.ndarray, tot: np.ndarray, filled_cur: float, filled_tot: 
 
 
 # ---------------------------------------------------------------- main view (a fragment: reruns alone while playing)
+SPEEDS = [1, 10, 60, 300]
+HELP_TEXT = f"""
+**What is this?** A replay of one trading session. Every row of the CSV is somebody placing or cancelling an order; the page rebuilds
+what the market looked like at any moment and which trades happened.
+
+**Moving through time.** Press **Play** to watch it run, or drag the time slider. The buttons jump by a fixed amount of market time
+(−1 min … +1 min), to the previous/next trade, or by a single CSV row (‹ 1 event ›). Type a time such as `12:30` in *Jump to time*.
+You can also click the thin whole-session chart under the main chart.
+
+**The main chart.** Each candle covers one time slot (pick its length under *One candle =*).
+<span style="color:{UP}">Green</span> = the price ended the slot higher than it started, <span style="color:{DOWN}">red</span> = lower.
+The bars underneath are how many lots traded in that slot, green when buyers did most of the pushing, red when sellers did.
+The dashed yellow line is *now*; the grey area to its right has not happened yet. Hover anything for details.
+Drag to move the chart, scroll to zoom, double-click to reset.
+
+**Words.** *Bid* = the best price someone is waiting to buy at. *Ask* = the best price someone is waiting to sell at.
+*Spread* = ask − bid. *Mid* = halfway between them. *Lot* = one unit of size. *IOC* = an order that trades immediately
+or is cancelled; *limit* = an order that waits in the book.
+"""
+
+
+def card(label: str, value: str, sub: str = '', color: str | None = None) -> str:
+    style = f' style="color:{color}"' if color else ''
+    return f'<div class="card"><div class="clabel">{label}</div><div class="cvalue"{style}>{value}</div><div class="csub">{sub or "&nbsp;"}</div></div>'
+
+
 def view(r: engine.Replay, source: str, opts: dict) -> None:
     ss = st.session_state
     tp = r.tape
@@ -486,111 +601,170 @@ def view(r: engine.Replay, source: str, opts: dict) -> None:
         t1 = t0 + 1
     hrs = t1 >= 3600
 
-    # navigator click: handled once per new selection, before anything uses `pos`
+    # navigator: a drag picks the stretch the main chart shows (and moves "now" to its end), a click jumps there.
+    # Handled once per new selection, before anything uses `pos`.
     nx, ny = nav_series(source, r)
     try:
-        pts = ss['nav']['selection']['points']
-    except (KeyError, TypeError):
-        pts = []
-    if pts:
-        pi = pts[0].get('point_index')
-        if pi is not None and ss.get('_nav_last') != (source, pi):
-            ss['_nav_last'] = (source, pi)
-            ss['pos'] = max(int(np.searchsorted(tp.time, nx[min(int(pi), len(nx) - 1)], side='right')) - 1, 0)
-            ss['playing'] = False
-    else:
+        sel = ss[f'nav{ss.get("_navgen", 0)}']['selection']
+        boxes, pts = sel.get('box') or [], sel.get('points') or []
+    except (KeyError, TypeError, AttributeError):
+        boxes, pts = [], []
+    key = (source, repr(boxes[-1]['x']) if boxes else None, pts[0].get('point_index') if pts and not boxes else None)
+    if (boxes or pts) and ss.get('_nav_last') != key:
+        ss['_nav_last'] = key
+        ss['playing'] = False
+        ss['_navgen'] = ss.get('_navgen', 0) + 1  # a fresh strip widget, so the old selection can't swallow the next click or drag
+        if boxes:
+            a_, b_ = sorted(nav_seconds(v) for v in boxes[-1]['x'][:2])
+            a_, b_ = max(a_, t0), min(b_, t1)
+            if b_ - a_ < 0.025 * (t1 - t0):  # a tiny drag (or a click, which the page script turns into one) means "jump here"
+                a_, b_ = None, (a_ + b_) / 2
+            if a_ is not None:
+                ss['custom_win'] = (a_, b_)
+            ss['pos'] = max(pos_at(b_), 0)
+        else:
+            ss['pos'] = max(pos_at(float(nx[min(int(pts[0]['point_index']), len(nx) - 1)])), 0)
+    elif not (boxes or pts):
         ss['_nav_last'] = None
 
     if ss.get('playing'):
         now = time.time()
-        dt = min(now - ss.get('last_tick', now), 5.0)
+        step = min(now - ss.get('last_tick', now), 5.0)
         ss['last_tick'] = now
-        pos = int(np.searchsorted(tp.time, tp.time[ss['pos']] + dt * (ss.get('speed') or 1), side='right')) - 1
+        pos = int(np.searchsorted(tp.time, tp.time[ss['pos']] + step * (ss.get('speed') or 1), side='right')) - 1
         pos = max(pos, ss['pos'] + 1)
         if pos >= n - 1:
             pos, ss['playing'] = n - 1, False
         ss['pos'] = pos
     pos = ss['pos']
     t = float(tp.time[pos])
-    ss['tslider'] = t
+    ss['tslider'] = to_dt(t)
 
-    # ---- transport bar
+    # ---- 1. where am I in time, and how do I move
     with st.container(border=True):
-        c = st.columns([0.7, 0.55, 0.55, 0.55, 0.55, 1.5, 1.5, 1.6], vertical_alignment='center')
-        if c[0].button(':material/pause:' if ss.get('playing') else ':material/play_arrow:', type='primary', help='Play / pause', width='stretch'):
-            ss['playing'] = not ss.get('playing', False)
+        top = st.columns([2.4, 1.2, 1.3, 2.6], vertical_alignment='center')
+        top[0].markdown(f'<div class="clabel">Market time</div><div class="tread">{fmt_t(t, hrs)}</div>'
+                        f'<div class="csub">of {fmt_t(t1, hrs)} &middot; row {pos + 1:,} of {n:,} in the CSV</div>', unsafe_allow_html=True)
+        playing = ss.get('playing', False)
+        if top[1].button(':material/pause: Pause' if playing else ':material/play_arrow: Play', type='primary', width='stretch',
+                         help='Run the market forward on its own'):
+            ss['playing'] = not playing
             if ss['playing'] and pos >= n - 1:
                 ss['pos'] = 0
             ss['last_tick'] = time.time()
             st.rerun()
-        c[1].button(':material/skip_previous:', help='Previous trade', on_click=on_trade_jump, args=(-1,), width='stretch', key='prevtrade')
-        c[2].button(':material/chevron_left:', help='Step back', on_click=on_step, args=(-1,), width='stretch', key='back')
-        c[3].button(':material/chevron_right:', help='Step forward', on_click=on_step, args=(1,), width='stretch', key='fwd')
-        c[4].button(':material/skip_next:', help='Next trade', on_click=on_trade_jump, args=(1,), width='stretch', key='nexttrade')
-        c[5].segmented_control('Step (events)', [1, 10, 100, 1000], default=1, key='stepsize', format_func=lambda v: f'{v:,}' if v < 1000 else '1k',
-                               help='Events per step', label_visibility='collapsed')
-        c[6].segmented_control('Speed', [1, 10, 60, 300], default=10, key='speed', format_func=lambda v: f'{v}x',
-                               help='Play speed: simulated seconds per real second', label_visibility='collapsed')
-        c[7].markdown(f'<div class="tread">{fmt_t(t, hrs)}</div><div class="tsub">event {pos:,} / {n - 1:,}</div>', unsafe_allow_html=True)
-        st.slider('Time', t0, t1, key='tslider', step=max((t1 - t0) / 20000, 1e-6), format='%.3f', on_change=on_slider, label_visibility='collapsed')
+        top[2].selectbox('Play speed', SPEEDS, index=1, key='speed', format_func=lambda v: 'real time' if v == 1 else f'{v}x faster',
+                         help='How fast Play runs compared to real time')
+        top[3].text_input('Jump to time', key='jumpto', placeholder='e.g. 12:30 or 1:05:00', on_change=on_jump,
+                          help='Type a market time (minutes:seconds) and press Enter')
+        if 'jumpto' in ss and ss.get('_jump_err') is not None:
+            st.warning(f'Could not read "{ss.pop("_jump_err")}" as a time. Use minutes:seconds, e.g. 12:30.')
+        fmt = 'H:mm:ss' if hrs else 'mm:ss'
+        st.slider('Time', to_dt(t0), to_dt(t1), key='tslider', step=dt.timedelta(milliseconds=100 if t1 - t0 <= 7200 else 1000),
+                  format=fmt, on_change=on_slider, label_visibility='collapsed')
+        b = st.columns(12)
+        moves = [(':material/first_page: Start', on_edge, (False,), 'Go to the first row'),
+                 ('−1 min', on_time_step, (-60,), 'Back one minute'), ('−10 s', on_time_step, (-10,), 'Back ten seconds'),
+                 ('−1 s', on_time_step, (-1,), 'Back one second'), ('‹ 1 event', on_step, (-1,), 'Back one CSV row'),
+                 ('‹ Trade', on_trade_jump, (-1,), 'Back to the previous trade'), ('Trade ›', on_trade_jump, (1,), 'On to the next trade'),
+                 ('1 event ›', on_step, (1,), 'Forward one CSV row'), ('+1 s', on_time_step, (1,), 'Forward one second'),
+                 ('+10 s', on_time_step, (10,), 'Forward ten seconds'), ('+1 min', on_time_step, (60,), 'Forward one minute'),
+                 ('End :material/last_page:', on_edge, (True,), 'Go to the last row')]
+        for col, (label, fn, args, tip) in zip(b, moves):
+            col.button(label, on_click=fn, args=args, help=tip, width='stretch', key=f'mv{label}')
 
-    # ---- window + chart options
-    o = st.columns([2.6, 3.4, 1.3, 1.1], vertical_alignment='center')
-    wlabel = o[0].segmented_control('Window', list(WINDOWS), default='5 min', key='window') or '5 min'
-    bin_label = o[1].segmented_control('Candle / volume aggregation', list(BIN_CHOICES), default='Auto', key='candlebin',
-                                       help='How much time each candle and volume bar covers. Auto picks one from the window.') or 'Auto'
-    cand_src = o[2].segmented_control('Candles from', ['Mid', 'Trades'], default='Mid', key='candsrc') or 'Mid'
-    show_ba = o[3].toggle('Bid/ask lines', value=False, key='showba')
-    x0, x1 = window_range(t, WINDOWS[wlabel], t0, t1)
-    bw = BIN_CHOICES[bin_label] or AUTO_BIN[wlabel]
-    grow = max(1, int(np.ceil((x1 - x0) / bw / 2000)))
-    if grow > 1:
-        bw *= grow
-        o[1].caption(f'{bin_label} would give too many candles here; using {bw:g} s')
-
+    # ---- 2. the market right now, in plain words
     book = engine.book_at(r, pos)
     bids, asks = book.levels()
     k = engine.trade_count_through(r, pos)
     cur = engine.counters_at(r, pos)
     tot = r.chunk_counters[-1]
     mid = mid_series(source, r)
+    bb, ba = (bids[0] if bids else None), (asks[0] if asks else None)
+    cards = [card('Price now (mid)', f'{(bb[0] + ba[0]) / 2:,.1f}' if bb and ba else '-', 'halfway between bid and ask'),
+             card('Best bid', f'{bb[0]:,}' if bb else 'none', f'{bb[1]:,} lots waiting to buy' if bb else 'nobody waiting to buy', UP),
+             card('Best ask', f'{ba[0]:,}' if ba else 'none', f'{ba[1]:,} lots waiting to sell' if ba else 'nobody waiting to sell', DOWN),
+             card('Spread', f'{ba[0] - bb[0]:,}' if bb and ba else '-', 'ask minus bid')]
+    if k:
+        j = k - 1
+        who = 'a buyer' if r.t_side[j] == 0 else 'a seller'
+        cards.append(card('Last trade', f'{int(r.t_price[j]):,}', f'{int(r.t_qty[j]):,} lots, {who} hit the book, {fmt_t(t - r.t_time[j], False)} ago',
+                          UP if r.t_side[j] == 0 else DOWN))
+    else:
+        cards.append(card('Last trade', '-', 'no trades yet'))
+    total_q = r.cum_qty[:, k].sum()
+    cards.append(card('Traded so far', f'{int(total_q):,} lots', f'in {int(r.cum_cnt[:, k].sum()):,} trades'))
+    st.markdown(f'<div class="cards">{"".join(cards)}</div>', unsafe_allow_html=True)
 
+    # ---- 3. chart controls
+    o = st.columns([2.6, 3.6, 1.1], vertical_alignment='bottom')
+    wlabel = o[0].segmented_control('Chart shows', list(WINDOWS), default='5 min', key='window', on_change=lambda: ss.pop('custom_win', None),
+                                    help='How much market time the chart shows around now. You can also drag across the whole-session strip.') or '5 min'
+    bin_label = o[1].segmented_control('One candle =', list(BIN_CHOICES), default='Auto', key='candlebin',
+                                       help='How much time each candle and volume bar covers. Auto picks one from the window.') or 'Auto'
+    with o[2].popover('Chart options', width='stretch'):
+        cand_src = st.radio('Candles from', ['Mid', 'Trades'], key='candsrc', format_func=lambda v: 'Mid price' if v == 'Mid' else 'Trade prices',
+                            help='Mid price changes all the time; trade prices only when something trades, so trade candles have gaps.')
+        show_ba = st.toggle('Best bid/ask lines', value=False, key='showba')
+        show_trades = st.toggle('Show individual trades', value=False, key='showtrades',
+                                help='Small arrows for every trade (up = buyer, down = seller). Hidden when more than 300 are in view.')
+    custom = ss.get('custom_win')
+    if custom:
+        # the stretch dragged on the strip: kept while "now" is inside it, then it follows "now" at the same width
+        cw = custom[1] - custom[0]
+        x0, x1 = custom if custom[0] <= t <= custom[1] else window_range(t, cw, t0, t1)
+        auto_bw = next((b_ for lim, b_ in ((10, 0.1), (60, 1), (300, 5), (900, 10), (3600, 30)) if cw <= lim), 60)
+        win_name = f'custom {fmt_t(cw, hrs)}'
+        cc = st.columns([6, 1], vertical_alignment='center')
+        cc[0].caption(f'Showing the stretch you dragged on the whole-session strip: {fmt_t(x0, hrs)} to {fmt_t(x1, hrs)}.')
+        cc[1].button('Back to presets', on_click=lambda: ss.pop('custom_win', None), width='stretch')
+    else:
+        x0, x1 = window_range(t, WINDOWS[wlabel], t0, t1)
+        auto_bw, win_name = AUTO_BIN[wlabel], wlabel
+    bw = BIN_CHOICES[bin_label] or auto_bw
+    grow = max(1, int(np.ceil((x1 - x0) / bw / 2000)))
+    if grow > 1:
+        bw *= grow
+        o[1].caption(f'{bin_label} would give too many candles here; using {bw:g} s')
+
+    # ---- 4. chart + order book
     left, right = st.columns([3, 1])
     with left:
-        st.plotly_chart(main_fig(r, mid, x0, x1, t, bw, cand_src, show_ba, hrs, f'{source}|{wlabel}'), width='stretch', config=PLOT_CONFIG,
-                        theme='streamlit', key='main')
-        st.plotly_chart(nav_fig(nx, ny, x0, x1, t, hrs), width='stretch', config={'displayModeBar': False}, theme='streamlit', key='nav',
-                        on_select='rerun', selection_mode='points')
+        st.plotly_chart(main_fig(r, mid, x0, x1, t, bw, cand_src, show_ba, hrs, f'{source}|{win_name}|{custom}', show_trades), width='stretch',
+                        config=PLOT_CONFIG, theme='streamlit', key='main')
+        st.markdown(f'<div class="legend"><span><i style="background:{UP}"></i>price went up / buyers pushed</span>'
+                    f'<span><i style="background:{DOWN}"></i>price went down / sellers pushed</span>'
+                    f'<span><i class="line"></i>now</span><span><i style="background:rgba(128,128,128,.35)"></i>not happened yet</span>'
+                    f'<span class="muted">drag = move &middot; scroll = zoom &middot; double-click = reset &middot; hover = details</span></div>',
+                    unsafe_allow_html=True)
+        st.caption('Whole session (yellow = what the chart shows). **Drag** across it to show that stretch, **click** to jump there.')
+        st.plotly_chart(nav_fig(nx, ny, x0, x1, t, hrs), width='stretch', config={'displayModeBar': False}, theme='streamlit', key=f'nav{ss.get("_navgen", 0)}',
+                        on_select='rerun', selection_mode=('points', 'box'))
     with right:
-        m = st.columns(3)
-        m[0].metric('Bid', f'{bids[0][0]:,}' if bids else '-')
-        m[1].metric('Ask', f'{asks[0][0]:,}' if asks else '-')
-        m[2].metric('Spread', f'{asks[0][0] - bids[0][0]:,}' if bids and asks else '-')
-        m = st.columns(2)
-        m[0].metric('Last trade', f'{int(r.t_price[k - 1]):,}' if k else '-')
-        ka = min(int(np.searchsorted(r.t_time, x0, 'left')), k)
-        m[1].metric('Vol in window', f'{int(r.cum_qty[:, k].sum() - r.cum_qty[:, ka].sum()):,}')
-        if k:
-            st.caption(f'{int(r.t_qty[k - 1]):,} lots, {"buy" if r.t_side[k - 1] == 0 else "sell"} aggressor, {"IOC" if r.t_ioc[k - 1] else "limit"}, '
-                       f'at {fmt_t(r.t_time[k - 1], hrs)}')
+        st.markdown('**Order book now**', help='Orders waiting to be traded. Sellers on top (red), buyers below (green). '
+                    'The bar shows how many lots wait at each price.')
         st.markdown(ladder_html(bids, asks, opts['levels']), unsafe_allow_html=True)
 
-    # ---- tabs
-    tabs = st.tabs(['Trades', 'Event log', 'Depth', 'Order flow', 'Session totals'])
+    # ---- 5. details
+    tabs = st.tabs(['Recent trades', 'What happened (event log)', 'Order book depth', 'Order types', 'Totals'])
     with tabs[0]:
+        st.caption('The last 50 trades up to now, newest first. BUY = a buyer took a resting sell order; SELL = the other way round.')
         trades_table(r, k, hrs, opts['ids'])
     with tabs[1]:
+        st.caption('CSV rows around now, in plain words. Trades caused by a row are listed under it.')
         event_log(r, pos, opts['log_half'], hrs, opts['ids'])
     with tabs[2]:
+        st.caption('All waiting orders by price: bars per price, lines = total lots available from the best price outwards.')
         st.plotly_chart(depth_fig(book), width='stretch', theme='streamlit', key='depth')
     with tabs[3]:
+        st.caption('What kind of orders the market sent, up to now and in the whole file.')
         order_flow(cur, tot, float(r.cum_qty[[2, 3], k].sum()), float(r.cum_qty[[2, 3], -1].sum()))
     with tabs[4]:
-        total_q = r.cum_qty[:, k].sum()
         mm = st.columns(3)
-        mm[0].metric('Trades to t', f'{int(r.cum_cnt[:, k].sum()):,}')
-        mm[1].metric('Volume to t', f'{int(total_q):,} lots')
-        mm[2].metric('VWAP to t', f'{r.cum_notional[k] / total_q:,.2f}' if total_q else '-')
+        mm[0].metric('Trades so far', f'{int(r.cum_cnt[:, k].sum()):,}')
+        mm[1].metric('Lots traded so far', f'{int(total_q):,}')
+        mm[2].metric('Average trade price so far', f'{r.cum_notional[k] / total_q:,.2f}' if total_q else '-',
+                     help='Volume-weighted: big trades count more (VWAP)')
         st.plotly_chart(cumulative_fig(r, t, t0, hrs, source), width='stretch', config=PLOT_CONFIG, theme='streamlit', key='cum')
 
 
@@ -603,10 +777,10 @@ with st.sidebar:
     choice = st.selectbox('CSV in data/', files, format_func=lambda p: p.name) if files else None
     upload = st.file_uploader('...or upload a CSV', type='csv')
     with st.expander('Advanced', expanded=False):
-        levels = st.number_input('Ladder levels per side', 1, 40, 10)
-        log_half = st.number_input('Event log rows each side', 3, 40, 12)
-        st.number_input('Go to event #', 0, None, 0, key='goto', on_change=on_goto)
-        ids = st.checkbox('Show ids', value=False)
+        levels = st.number_input('Order book rows per side', 1, 40, 10)
+        log_half = st.number_input('Event log rows before/after now', 3, 40, 12)
+        st.number_input('Go to CSV row #', 0, None, 0, key='goto', on_change=on_goto)
+        ids = st.checkbox('Show order ids', value=False)
 
 if upload is not None:
     data = upload.getvalue()
@@ -619,16 +793,18 @@ elif choice is not None:
     replay_ = load_path(str(choice), stt.st_mtime, stt.st_size)
     fname = choice.name
 else:
-    st.info('Put a CSV in data/ or upload one.')
+    st.info('Put a CSV in data/ or upload one in the sidebar.')
     st.stop()
 
 if st.session_state.get('_src') != source:
     st.session_state.update(_src=source, pos=0, playing=False, _nav_last=None)
 st.session_state['_r'] = replay_
 tpe = replay_.tape
-st.markdown(f'<span class="ttl">Market viewer</span><span class="muted">{fname} &middot; {replay_.n:,} rows &middot; '
-            f'{tpe.time[-1] - tpe.time[0]:,.0f} s &middot; {len(replay_.t_ev):,} trades &middot; {int(replay_.t_qty.sum()):,} lots traded</span>',
-            unsafe_allow_html=True)
+head = st.columns([5, 1.3], vertical_alignment='center')
+head[0].markdown(f'<span class="ttl">Market dashboard</span><span class="muted">{fname} &middot; {(tpe.time[-1] - tpe.time[0]) / 60:,.0f} min of trading &middot; '
+                 f'{len(replay_.t_ev):,} trades &middot; {int(replay_.t_qty.sum()):,} lots traded</span>', unsafe_allow_html=True)
+with head[1].popover(':material/help: How to read this page', width='stretch'):
+    st.markdown(HELP_TEXT, unsafe_allow_html=True)
 if tpe.time_fixed:
     st.warning(f'{tpe.time_fixed} rows had decreasing timestamps (clamped).')
 if replay_.dups:

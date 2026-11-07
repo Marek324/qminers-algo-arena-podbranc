@@ -17,6 +17,7 @@ Writes <out>.csv (simulator format) and <out>_S.npz with the true S at every row
 
 Usage:
   .venv/bin/python scripts/gen_tape.py --seed 1                 # -> data/synthetic/synth_r1_s1.csv
+  .venv/bin/python scripts/gen_tape.py --seed 1 2 3             # the three twins used in docs/DATA_ANALYSIS.md
   .venv/bin/python scripts/gen_tape.py --out data/synthetic/synth_short --duration 1200 --seed 2
 """
 
@@ -224,14 +225,17 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument('--out', help='output path without extension (default data/synthetic/synth_r1_s<seed>)')
     ap.add_argument('--duration', type=float, default=12000.0)
-    ap.add_argument('--seed', type=int, default=1)
+    ap.add_argument('--seed', type=int, nargs='+', default=[1], help='one tape per seed; same seed, same tape')
     for k, v in R1.items():
         ap.add_argument('--' + k.replace('_', '-'), type=float, default=v)
     a = ap.parse_args()
     p = {k: getattr(a, k) for k in R1}
-    out = a.out or f'data/synthetic/synth_r1_s{a.seed}'
-    Path(out).parent.mkdir(parents=True, exist_ok=True)
-    generate(out, a.duration, a.seed, p)
+    if a.out and len(a.seed) > 1:
+        ap.error('--out takes a single --seed')
+    for seed in a.seed:
+        out = a.out or f'data/synthetic/synth_r1_s{seed}'
+        Path(out).parent.mkdir(parents=True, exist_ok=True)
+        generate(out, a.duration, seed, p)
 
 
 if __name__ == '__main__':

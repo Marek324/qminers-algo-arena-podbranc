@@ -880,7 +880,7 @@ elif choice is not None:
     replay_ = load_path(str(choice), stt.st_mtime, stt.st_size)
     fname, csv_path, data = choice.name, choice, None
 else:
-    st.info('Put a CSV in data/ (or gunzip / generate one into data/synthetic/ with scripts/gen_tape.py), or upload one in the sidebar.')
+    st.info('Put a CSV in data/ (or generate one into data/synthetic/ with scripts/gen_tape.py --seed 1), or upload one in the sidebar.')
     st.stop()
 
 with st.sidebar:

@@ -10,6 +10,9 @@ Additions to strategies/hmm_mm.py (JPod's), each behind a switch:
 - EDGE_PV (Cartea-Jaimungal style): quiet quotes keep EDGE + EDGE_PV * p_vol from fair, so they back off as the
   volatile probability builds instead of all at once at P_ON (0: off).
 - ALPHA_PULL: quiet policy, when |fair - mid| > ALPHA_PULL the side the signal points against is not quoted (0: off).
+- SWEEP_BOUND: market taker orders are priced at round(S +- 1), so a taker buy that trades up to price p proves
+  S >= p - 1.5 (a sell down to p: S <= p + 1.5). After each such event S_hat is pulled toward the bound minus SLACK
+  with weight SWEEP_W when it sits on the wrong side of it; the variance is not reduced (off by default).
 - OVER_POS: when the volatile fair is OVER_EDGE or more ticks through the stale book, the sweep may take inventory up
   to OVER_POS (> 100, the exchange charges 10,000 per second above 100). Once that side no longer has V_EDGE_TAKE of
   edge, any |inventory| above MAX_POS is closed by one IOC UNWIND_SLIP ticks through the touch.
@@ -83,10 +86,15 @@ class HmmMMPlusStrategy(BaseStrategy):
     OVER_POS = 100       # inventory cap for sweeps with OVER_EDGE of edge (100: off)
     OVER_EDGE = 5.0
     UNWIND_SLIP = 1
+    UNWIND_GAP = -1.0    # unwind an overshoot only once the touch is within this of fair, or after MAX_OVER_US (< 0: old rule)
+    MAX_OVER_US = 1_000_000
     V_RECYCLE = -1.0     # close a volatile position by IOC once the touch is within this of fair (< 0: off)
     CALM_SWEEP = 0.0     # quiet policy: sweep stale levels when fair is this far through the best (0: off)
     EDGE_PV = 0.0        # quiet quote edge grows by this times p_vol (0: off)
     ALPHA_PULL = 0.0     # quiet policy: no quote against a signal stronger than this (0: off)
+    SWEEP_BOUND = False  # use market taker sweeps as bounds on S
+    SLACK = 0.5          # ticks of slack below (above) the proven bound
+    SWEEP_W = 1.0        # how far S_hat moves to the bound (1: all the way)
     # HMM
     H_N_Q0 = 1.0         # start mean of n (half ticks beyond the first) in the quiet state
     H_N_V0 = 2.7         # and in the volatile state
@@ -145,6 +153,7 @@ class HmmMMPlusStrategy(BaseStrategy):
         self.ba = 0
         self.unwind_id = None
         self.recycle_id = None
+        self.over_since = 0
 
     def _cancel(self, oid: str) -> None:
         if oid not in self.cancel_sent:
@@ -190,9 +199,24 @@ class HmmMMPlusStrategy(BaseStrategy):
         # flow
         self.flow *= math.exp((self.flow_t - now) / self.FLOW_TAU_US)
         self.flow_t = now
+        hi = lo = 0
         for tr in trades:
             if tr.taker_owner == 'market':
                 self.flow += tr.quantity if tr.book_side == 'ask' else -tr.quantity
+                if tr.book_side == 'ask':
+                    if tr.price > hi:
+                        hi = tr.price
+                elif lo == 0 or tr.price < lo:
+                    lo = tr.price
+        if self.SWEEP_BOUND:
+            if hi:
+                b = hi - 1.0 - self.SLACK
+                if self.s < b:
+                    self.s += self.SWEEP_W * (b - self.s)
+            if lo:
+                b = lo + 1.0 + self.SLACK
+                if self.s > b:
+                    self.s += self.SWEEP_W * (b - self.s)
         half = (bq + aq) / 2
         self.depth = half if self.depth == 0 else self.depth + self.DEPTH_EMA * (half - self.depth)
         x = self.flow / self.depth
@@ -201,14 +225,26 @@ class HmmMMPlusStrategy(BaseStrategy):
         fx = self.flow_scale * x
         imb = (bq - aq) / (bq + aq)
 
+        if abs(self.inv) <= self.MAX_POS:
+            self.over_since = 0
+        elif not self.over_since:
+            self.over_since = now
         if self.OVER_POS > self.MAX_POS and self.unwind_id is None and abs(self.inv) > self.MAX_POS:
             vfair = mid + self.V_K_S * (self.s - mid) + self.V_K_FLOW * fx
-            if self.inv > 0 and vfair - ba < self.V_EDGE_TAKE:
+            late = now - self.over_since >= self.MAX_OVER_US
+            if self.UNWIND_GAP >= 0:
+                # calculated: hold the overshoot until the book has caught up with fair (or too long over the limit)
+                long_ok = late or bb >= vfair - self.UNWIND_GAP
+                short_ok = late or ba <= vfair + self.UNWIND_GAP
+            else:
+                long_ok = vfair - ba < self.V_EDGE_TAKE
+                short_ok = bb - vfair < self.V_EDGE_TAKE
+            if self.inv > 0 and long_ok:
                 q = self.inv - self.MAX_POS
                 self.unwind_id = self.send_order(OrderRequest(side=Side.SELL, price=max(1, bb - self.UNWIND_SLIP),
                                                               quantity=q, order_type=OrderType.IOC))
                 self.orders[self.unwind_id] = [-1, bb - self.UNWIND_SLIP, q]
-            elif self.inv < 0 and bb - vfair < self.V_EDGE_TAKE:
+            elif self.inv < 0 and short_ok:
                 q = -self.inv - self.MAX_POS
                 self.unwind_id = self.send_order(OrderRequest(side=Side.BUY, price=ba + self.UNWIND_SLIP,
                                                               quantity=q, order_type=OrderType.IOC))

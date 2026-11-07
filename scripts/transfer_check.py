@@ -37,7 +37,8 @@ def make_variant(spec: str, tmp: Path, i: int) -> tuple[str, Path]:
     text = Path(path).read_text()
     for kv in filter(None, ov.split(',')):
         name, value = kv.split('=', 1)
-        text, n = re.subn(rf'^{name} = [^#\n]*', f'{name} = {value}  ', text, count=1, flags=re.M)
+        # top-level constants and class attributes (indented) alike
+        text, n = re.subn(rf'^(\s*){name} = [^#\n]*', rf'\g<1>{name} = {value}  ', text, count=1, flags=re.M)
         if n == 0:
             raise SystemExit(f'{name} not found in {path}')
     out = tmp / f'variant{i}.py'

@@ -15,7 +15,7 @@ Reverse-engineered from `data/sample.csv`, `data/sample_v2.csv`, `data/round1.cs
 - **Main edge:**
   - The visible mid chases S with a half-life of about 200–260ms. You can estimate S from new limit orders and from trades that sweep past the best price.
   - The *side* of an IOC carries no information, but its *price* follows S. So when the book lags S, IOCs sweep one level deeper on the side S has moved toward.
-- **`round2_public` adds jumps.** Same engine, but S also jumps 30–100 ticks within a second about 6 times an hour. Between jumps it moves like `round1`. Passive fills now lose money after 1s. See [round2_public](#round2_public-same-engine-plus-jumps).
+- **`round2_public` adds jumps.** Same engine, but S also jumps 20–115 ticks instantly, about 8–9 times an hour, in random directions, with no warning and no reversion. Between jumps it moves like `round1`. Passive fills now lose money after 1s. See [round2_public](#round2_public-same-engine-plus-jumps).
 - **Seed recovery:** no seed found among simple seeds yet. A larger sweep on HPC is pending review. See the seed-recovery section below.
 
 ## The tapes
@@ -204,12 +204,36 @@ PnL is sensitive to κ: κ 0.0065 gives about 660–700k. An independent fit in 
 - Sizes: median limit 14 lots, median IOC 60–61 lots.
 - Each IOC pushes S: 0.0159 · size^0.63 (vs 0.0107 · size^0.66 in the re-run fit).
 
-**New: S jumps.** The −311 tick fall over the tape (10000 → 9689.5) is not a trend; it comes from a few large jumps:
-- S is tracked here through IOC prices (buy − 1, sell + 1), as a median per second. Most minutes move 1.0–1.3 ticks/√s, about the same as `round1`.
-- On top of that there are 10 one-second moves of 30–100 ticks: +56, −32, +41, −55, −54, −92, −43, +47, +103.5, +99. That is about 6 an hour, in both directions.
-- The kurtosis of 1-second moves is 288, where a Gaussian walk gives 0. Volatility per 10-minute block ranges from 1.3 to 25 ticks/√s.
-- One σ can't describe this: `estimate_model.py` fits σ = 3.64, which averages the jumps into the diffusion, and the fit error is 43.7 against 8.6–15 on `round1`. Its spread share, impact and microprice predictability are all far off.
-- Rate, size distribution, speed of a jump and whether new limit orders reveal it before the touch moves: being measured (`findings/reports/round2_jumps.md`).
+**New: S jumps.** The −311 tick fall over the tape (10000 → 9689.5) is not a trend; it comes from a few large jumps in S (reports: `findings/reports/round2_jumps.md`, `round2_check.md`).
+
+- **Instant.** S moves from one level to another between two consecutive orders. Checked at the millisecond level on the 13 biggest, using the range between the best new buy and the best new sell price before and after: +58.5, −31.5, +41.5, −54.5, +30, +31, −54, −89.5, −37, +22.5, +47.5, +115, +50 ticks. There is no gradual move.
+- **Permanent.** Large jumps don't revert: about 0–20% after 60s. They are shifts in fair value, not spikes.
+- **Rate.** 15 jumps of 20 ticks or more in 100 minutes (about 9 an hour), 12 of 30 or more. A threshold detector at 8 ticks finds 94–116, but most of those small ones revert erratically and are noise in the S estimate. A likelihood fit with a jump term is under way to pin down the rate and size scale.
+- **Big jumps are spaced out, not random.** The 20-tick-plus jumps (at 1559, 1794, 2264, 2467, 2763, 3056, 3209, 3423, 3621, 3873, 4267, 4414, 4825, 5399, 5570 s) are never closer than 147s apart. The mean gap is 286s and the gaps vary much less than Poisson arrivals would (CV 0.44 against 1). Under Poisson timing, gaps this regular have a probability of about 0.001. It looks like a schedule or a cool-down after each jump, so a strategy can expect about 2 minutes of calm after a big jump. But there is no big jump in the first 26 minutes, which fits neither a plain schedule nor Poisson timing; the jump process may switch on, or start after a long first wait. Smaller jumps (15–20 ticks) don't follow this spacing.
+- **Sizes and signs.** Up and down are a coin flip (48 / 46 in the 8-tick catalogue, p = 0.92). Sizes have an exponential tail (it fits far better than a normal), reaching 115 ticks. Landing levels show no pattern (no pull to 10000 or round numbers).
+- **No warning.** Nothing predicts the timing or the direction:
+  - Around the 13 biggest jumps, the IOC rate from 5s to 1s before is 8.6/s, the normal 8.9/s. It is 10.2/s in the last second.
+  - In the second before, order imbalance and IOC side don't predict the direction (|r| ≤ 0.16, not significant).
+  - Jump times aren't tied to the clock (seconds mod 60/100/300/600), the order-id counter, the number of IOCs, big IOCs or round price levels.
+  - Earlier "precursor" results came from windows that overlap earlier jumps.
+- **IOCs surge after a jump.** In the first second after a big jump, IOC arrivals rise to about 47/s (normally 8.9/s), and they stay around 19/s over the next 4s. They are priced at the new level and sweep the stale quotes. So the generator seems to send more IOCs while the book is out of date. 74% of IOCs that go 2 or more ticks through the best price come in the windows around jumps. Their pricing rule is unchanged: they reach deep only because the book is stale.
+- **Nothing else changes around jumps.** Limit-order rate and side balance, order sizes, and the push per IOC are the same inside and outside the jump windows.
+- **`round1` and `sample_v2` have none.** The same detectors find 0 jumps on either: its largest 200ms move is 3 ticks, and the kurtosis of 1-second moves is 0.4. On `round2_public` it is 263.
+- **Between jumps it is `round1` again.**
+  - Quiet minutes move 0.9–1.4 ticks/√s.
+  - Outside ±2.5s around each jump: X has mean 0.65 and sd 0.81 ticks (raw fit: 0.82 / 1.16), and the push per IOC is 0.0156 · size^0.59.
+  - The single σ = 3.64 from `estimate_model.py` averages the jumps into the diffusion, which is why its fit error is 43.7 (`round1`: 8.6–15) and its spread share, impact and microprice predictability are far off.
+
+**How fast a jump becomes visible** (median, from the jump):
+
+| Event | Median | 90th percentile |
+|---|---|---|
+| First new limit order at the new level | 6 ms (the next order to arrive) | 54 ms |
+| First trade against a stale resting order | 34 ms (10% within 1.5 ms) | |
+| Best bid / ask moves | 19 ms | 168 ms |
+| First IOC priced at the new level | 88 ms | 315 ms |
+
+With our 5 ms latency, a strategy that cancels as soon as the first new order shows the jump beats the first stale fill in only about 48% of jumps. Large stale quotes get swept: around 1,000 lots of the market's own resting orders per jump.
 
 **Resulting market:**
 
@@ -224,9 +248,15 @@ PnL is sensitive to κ: κ 0.0065 gives about 660–700k. An independent fit in 
 | Hindsight max per hour (combined / making / taking) | 417k / 405k / 145k | 1,023k / 981k / 519k |
 
 **Implications:**
-- Passive fills lose money after 1s on average, so the `round1` market makers can't be assumed to work as they are. The loss comes mostly from fills just before and during jumps, when resting orders at the old price are swept.
+- Passive fills lose money after 1s on average, so the `round1` market makers can't be assumed to work as they are. The loss comes from fills at the moment of a jump, when resting orders at the old price are swept.
 - Holding 100 lots through a 50–100 tick jump costs 5–10k at once.
-- New limit orders are placed around S, so they should show a jump before the best bid and ask move. Detecting it from new orders, then pulling quotes on the side being run over or trading with the jump, is the main new edge. The hindsight max more than doubled.
+- **Detect jumps from new limit orders.** A new order far outside the current band shows the jump about 6ms after it happens, well before the best bid/ask (19ms) or IOCs (88ms). Then cancel resting orders on the side being run over.
+- **Cancelling alone isn't enough.** It is too slow in about half the jumps. Defence has to be partly structural: less size resting at the touch, and smaller inventory when exposed.
+- **Trade with the jump.** Jumps are permanent and stale quotes stay in the book for about 19ms. An IOC at the old best price in the jump direction, sent as soon as the jump shows, takes those quotes. The hindsight max more than doubled (1.02M/h).
+- **Offline estimates** (`findings/reports/r2_exploit.md`, 5 ms latency, no queue model):
+  - Pulling quotes when a new order lands 6–8 ticks from the mid avoids about a third of the market's stale-fill losses, with few false alarms.
+  - An IOC of up to 100 lots in the jump direction, exited after 5–30s, makes +13k to +16k per hour.
+- **After a big jump, expect a quiet stretch.** The next 20-tick jump hasn't come sooner than 147s.
 - Between jumps the market is close to `round1`, so the `round1` quoting logic is still the base.
 
 ## What this means for strategies

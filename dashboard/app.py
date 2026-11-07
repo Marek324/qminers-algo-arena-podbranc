@@ -854,9 +854,13 @@ st.markdown(CSS, unsafe_allow_html=True)
 components.html(MIDDLE_PAN_JS, height=0)
 with st.sidebar:
     st.header('Data')
-    files = sorted((ROOT / 'data').glob('*.csv'))
+    # real tapes in data/, then synthetic tapes in data/synthetic/ (scripts/gen_tape.py, scripts/make_synthetic.py)
+    files = sorted((ROOT / 'data').glob('*.csv')) + sorted((ROOT / 'data' / 'synthetic').glob('*.csv'))
     names = [f.name for f in files]
-    choice = st.selectbox('CSV in data/', files, format_func=lambda p: p.name,
+    choice = st.selectbox('CSV in data/ or data/synthetic/', files,
+                          format_func=lambda p: f'synthetic/{p.name}' if p.parent.name == 'synthetic' else p.name,
+                          help='synthetic/* are generated tapes (scripts/gen_tape.py, scripts/make_synthetic.py), with the true hidden '
+                               'price saved next to them (docs/DATA_ANALYSIS.md, "Synthetic twin of round1").',
                           index=names.index(DEFAULT_FILE) if DEFAULT_FILE in names else 0) if files else None
     upload = st.file_uploader('...or upload a CSV', type='csv')
     with st.expander('Advanced', expanded=False):
@@ -876,7 +880,7 @@ elif choice is not None:
     replay_ = load_path(str(choice), stt.st_mtime, stt.st_size)
     fname, csv_path, data = choice.name, choice, None
 else:
-    st.info('Put a CSV in data/ or upload one in the sidebar.')
+    st.info('Put a CSV in data/ (or gunzip / generate one into data/synthetic/ with scripts/gen_tape.py), or upload one in the sidebar.')
     st.stop()
 
 with st.sidebar:

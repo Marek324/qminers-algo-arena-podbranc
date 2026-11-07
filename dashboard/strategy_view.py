@@ -50,7 +50,7 @@ def sidebar(csv_path: Path | None, tape_key: str, tape: engine.Tape) -> R.Strate
     if choice == NONE_LABEL:
         return None
     if csv_path is None:
-        st.warning('Strategies run on files in data/, not uploads.')
+        st.warning('Strategies run on files in data/ or data/synthetic/, not uploads.')
         return None
     path = next(f for f in files if f.name == choice)
     mtime = path.stat().st_mtime

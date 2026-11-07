@@ -14,3 +14,8 @@ logs/*
 .DS_Store
 # Private analysis findings (fitted generator values), never commit
 findings/
+# Synthetic tapes: only the gen_tape.py round1 twins (seeds 1-3) are committed, gzipped, with their true S
+!data/synthetic/
+data/synthetic/*
+!data/synthetic/synth_r1_s*.csv.gz
+!data/synthetic/synth_r1_s*_S.npz

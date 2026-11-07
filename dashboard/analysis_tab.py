@@ -760,7 +760,7 @@ def render(source: str, name: str, csv: Path | None, data: bytes | None) -> None
         rep = _run(source, None if csv is None else str(csv), data, name, float(req[0]), float(req[1]))
     if rep is None:
         st.info(f'No saved analysis for {name}. Press **Run analysis** (about 12 s per million rows), '
-                f'or run `uv run analysis.py data/{name}` and reload.')
+                f'or run `uv run analysis.py {Path(csv).relative_to(ROOT) if csv is not None else "data/" + name}` and reload.')
         return
 
     hrs = (rep['tape']['end_s'] or 0) >= 3600

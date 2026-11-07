@@ -5,6 +5,7 @@ Qminers Algo Trade Arena hackathon. Our job is to write a **trading strategy**. 
 ## What you may change
 
 - `strategies/`: new strategy files. Copy `strategies/template_strategy.py` into a new file and work there.
+- `tools/`: reusable building blocks (regressions, estimators, ...) that get **copied** into strategy files. See [Tools](#tools).
 - `docs/`, `AGENTS.md`, and helper scripts for analysis or parameter sweeps (e.g. `scripts/`, notebooks). These never get submitted.
 - `data/` and `logs/`: local data and backtest output. Both are git-ignored, so don't commit them.
 
@@ -16,6 +17,21 @@ Qminers Algo Trade Arena hackathon. Our job is to write a **trading strategy**. 
 - `strategies/template_strategy.py` and `strategies/trend_follower.py`: keep them as reference.
 
 If something in the simulator looks wrong, write it down. Work around it in the strategy, not in the simulator.
+
+## Tools
+
+Only **one `.py` file** is submitted, so a strategy can never `import tools` (or anything else local). `tools/` is a library to copy from, not to import:
+
+- To use a tool, paste the class (and the imports listed at the top of its file) into the strategy file.
+- Every tool must be **self-contained**: one class (or function) with no dependency on other tools or other files in the repo. If two tools share a helper, duplicate it.
+- Tools must already pass the submission rules below: stdlib/`numpy`/`pandas`/`scipy`/`scikit-learn` only, no forbidden builtins, no dunder attributes besides `__init__` (so no `__slots__`, `__repr__`, ...), no `str.format`.
+- Keep per-call cost low (O(1) or small O(k²)); they run on every market event.
+- Analysis scripts may import from `tools/` directly.
+- **Save every reusable building block to `tools/`.** When you write something generic for a strategy (a regression, filter, volatility estimator, signal, ...), put the canonical version in `tools/` as well, not only inline in the strategy. Strategies get rewritten and thrown away while we try things; `tools/` is where the pieces survive. If you improve a copied tool inside a strategy, port the fix back to `tools/` and add new tools to the list below.
+
+Current tools:
+
+- `tools/regression.py`: `RollingLinReg` (exact rolling OLS), `EwLinReg` (time-decayed OLS), `RLS` (multivariate recursive least squares).
 
 ## No tests
 

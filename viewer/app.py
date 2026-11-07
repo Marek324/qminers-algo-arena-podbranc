@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+import streamlit.components.v1 as components
 from plotly.subplots import make_subplots
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -27,6 +28,7 @@ CLEAR = 'rgba(0,0,0,0)'
 WINDOWS = {'10 s': 10, '1 min': 60, '5 min': 300, '15 min': 900, '1 h': 3600, 'All': None}
 AUTO_BIN = {'10 s': 0.1, '1 min': 1, '5 min': 5, '15 min': 10, '1 h': 30, 'All': 60}
 BIN_CHOICES = {'Auto': None, '100 ms': 0.1, '1 s': 1, '5 s': 5, '10 s': 10, '30 s': 30, '1 min': 60, '5 min': 300}
+MAX_MARKERS = 300
 PLOT_CONFIG = {'scrollZoom': True, 'displaylogo': False, 'modeBarButtonsToRemove': ['lasso2d', 'select2d']}
 CSS = f"""<style>
 .block-container {{ padding-top: 1.5rem; }}
@@ -155,6 +157,39 @@ def window_range(t: float, wsec, t0: float, t1: float) -> tuple[float, float]:
 
 
 # ---------------------------------------------------------------- figures
+# Session seconds become real timestamps from the epoch: Plotly sizes candles and bars correctly only on true dates
+# (plain millisecond numbers on a date axis give wildly wrong candle widths).
+def ts(sec) -> np.ndarray:
+    return (np.asarray(sec, dtype=np.float64) * 1e6).round().astype(np.int64).astype('datetime64[us]')
+
+
+def ts1(sec: float) -> str:
+    return str(ts(sec))
+
+
+SPIKE = dict(showspikes=True, spikemode='across', spikesnap='cursor', spikethickness=1, spikedash='solid', spikecolor='rgba(128,128,128,0.6)')
+
+# Middle mouse button drag pans any Plotly chart on the page. Plotly's drag box pans when a drag starts with Shift held,
+# so a middle-button press is swallowed and replayed as a Shift+left press; the real moves and release finish the drag.
+MIDDLE_PAN_JS = """<script>
+const w = window.parent, doc = w.document;
+if (!w.__middlePan) {
+  w.__middlePan = true;
+  doc.addEventListener('mousedown', e => {
+    if (e.button !== 1 || e.__synthetic) return;
+    const drag = e.target.closest && e.target.closest('.nsewdrag');
+    if (!drag) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    const ev = new w.MouseEvent('mousedown', {bubbles: true, cancelable: true, view: w, clientX: e.clientX, clientY: e.clientY,
+      screenX: e.screenX, screenY: e.screenY, button: 0, buttons: 1, shiftKey: true});
+    ev.__synthetic = true;
+    drag.dispatchEvent(ev);
+  }, true);
+  doc.addEventListener('auxclick', e => { if (e.button === 1 && e.target.closest && e.target.closest('.nsewdrag')) e.preventDefault(); }, true);
+}
+</script>"""
+
+
 def style_time_axes(fig: go.Figure, hrs: bool, **kw) -> None:
     f = '%H:%M:%S' if hrs else '%M:%S'
     fig.update_xaxes(type='date', gridcolor=GRID, hoverformat=f + '.%L', zeroline=False,
@@ -164,10 +199,10 @@ def style_time_axes(fig: go.Figure, hrs: bool, **kw) -> None:
 
 def cursor_shapes(t: float, x1: float | None) -> list[dict]:
     """Dashed cursor line, plus a faint grey rectangle over the not-yet-happened part when x1 is given."""
-    shapes = [dict(type='line', xref='x', yref='paper', x0=t * 1000, x1=t * 1000, y0=0, y1=1, line=dict(color=ACCENT, width=1, dash='dash'))]
-    if x1 is not None:
-        shapes.insert(0, dict(type='rect', xref='x', yref='paper', x0=t * 1000, x1=x1 * 1000, y0=0, y1=1, fillcolor='rgba(128,128,128,0.10)',
-                              line_width=0, layer='above'))
+    shapes = [dict(type='line', xref='x', yref='paper', x0=ts1(t), x1=ts1(t), y0=0, y1=1, line=dict(color=ACCENT, width=1, dash='dash'))]
+    if x1 is not None and x1 > t:
+        shapes.insert(0, dict(type='rect', xref='x', yref='paper', x0=ts1(t), x1=ts1(x1), y0=0, y1=1, fillcolor='rgba(128,128,128,0.10)',
+                              line_width=0, layer='below'))
     return shapes
 
 
@@ -182,6 +217,7 @@ def main_fig(r: engine.Replay, mid: np.ndarray, x0: float, x1: float, t: float, 
     i1 = int(np.searchsorted(tm, x1, 'right'))
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.72, 0.28], vertical_spacing=0.02)
 
+    centres = base + (np.arange(nb) + 0.5) * bw
     # candles
     if cand_src == 'Mid':
         y = mid[i0:i1]
@@ -192,11 +228,23 @@ def main_fig(r: engine.Replay, mid: np.ndarray, x0: float, x1: float, t: float, 
     ymin = ymax = None
     if res is not None:
         bins, o, h, l, c = res
+        if cand_src == 'Mid':
+            # The mid price is a state, so a quiet slot is a flat candle at the last close: one candle per slot, like any standard chart.
+            fill = np.full(nb, -1)
+            fill[bins] = np.arange(len(bins))
+            fill = np.maximum.accumulate(fill)
+            keep = fill >= 0
+            src_i, has = fill[keep], np.isin(np.arange(nb)[keep], bins)
+            bins = np.nonzero(keep)[0]
+            o, h, l, c = (np.where(has, v[src_i], c[src_i]) for v in (o, h, l, c))
         ymin, ymax = float(l.min()), float(h.max())
         text = [f'{fmt_t(base + k * bw, hrs)}<br>O {p:,.1f}  H {q:,.1f}<br>L {u:,.1f}  C {v:,.1f}' for k, p, q, u, v in zip(bins, o, h, l, c)]
-        fig.add_trace(go.Candlestick(x=(base + (bins + 0.5) * bw) * 1000, open=o, high=h, low=l, close=c, name='Candles', showlegend=False, text=text,
-                                     hoverinfo='text', increasing=dict(line=dict(color=UP), fillcolor=UP),
-                                     decreasing=dict(line=dict(color=DOWN), fillcolor=DOWN)), row=1, col=1)
+        # An invisible candle in every slot pins the candle width to the slot width, even when trade candles leave gaps.
+        fig.add_trace(go.Candlestick(x=ts(centres), open=np.full(nb, c[0]), high=np.full(nb, c[0]), low=np.full(nb, c[0]), close=np.full(nb, c[0]),
+                                     opacity=0, hoverinfo='skip', showlegend=False, name='grid'), row=1, col=1)
+        fig.add_trace(go.Candlestick(x=ts(centres[bins]), open=o, high=h, low=l, close=c, name='Candles', showlegend=False, text=text,
+                                     hoverinfo='text', whiskerwidth=0, increasing=dict(line=dict(color=UP, width=1), fillcolor=UP),
+                                     decreasing=dict(line=dict(color=DOWN, width=1), fillcolor=DOWN)), row=1, col=1)
 
     # best bid / ask overlay
     if show_ba:
@@ -209,14 +257,14 @@ def main_fig(r: engine.Replay, mid: np.ndarray, x0: float, x1: float, t: float, 
                 idx = np.arange(0, len(yy), -(-len(yy) // 3000))
                 xx, yy = np.repeat(xx[idx], 2), np.column_stack([np.fmin.reduceat(yy, idx), np.fmax.reduceat(yy, idx)]).ravel()
                 shape = 'linear'
-            fig.add_trace(go.Scatter(x=xx * 1000, y=yy, mode='lines', name=name, opacity=0.4, line=dict(color=color, width=1, shape=shape),
+            fig.add_trace(go.Scatter(x=ts(xx), y=yy, mode='lines', name=name, opacity=0.4, line=dict(color=color, width=1, shape=shape),
                                      hoverinfo='skip'), row=1, col=1)
 
     # trade markers
     sel = np.arange(a, b)
-    capped = len(sel) > 4000
+    capped = len(sel) > MAX_MARKERS  # a busy window would bury the candles under markers, so they appear only once zoomed in
     if capped:
-        sel = sel[:: -(-len(sel) // 4000)]
+        sel = sel[:0]
     if len(sel):
         pr = r.t_price[sel].astype(float)
         off = max(0.03 * ((ymax - ymin) if ymax is not None and ymax > ymin else 4.0), 0.3)
@@ -228,8 +276,8 @@ def main_fig(r: engine.Replay, mid: np.ndarray, x0: float, x1: float, t: float, 
             s = sel[m]
             q = r.t_qty[s]
             fig.add_trace(go.Scatter(
-                x=ta[s] * 1000, y=pr[m] + (-off if side == 0 else off), mode='markers', name=nm,
-                marker=dict(symbol=sym, color=col, size=np.clip(6 + 1.6 * np.sqrt(q), 7, 20), line=dict(width=1.5, color=col)),
+                x=ts(ta[s]), y=pr[m] + (-off if side == 0 else off), mode='markers', name=nm,
+                marker=dict(symbol=sym, color=col, size=np.clip(5 + 1.2 * np.sqrt(q), 6, 14), line=dict(width=1.2, color=col)),
                 customdata=np.column_stack([[fmt_t(v, hrs) for v in ta[s]], r.t_price[s], q]),
                 hovertemplate='%{customdata[0]}<br>price %{customdata[1]:,}  qty %{customdata[2]:,}<extra>' + nm + '</extra>'), row=1, col=1)
 
@@ -239,34 +287,36 @@ def main_fig(r: engine.Replay, mid: np.ndarray, x0: float, x1: float, t: float, 
     buy = np.bincount(k_[side_ == 0], weights=qty_[side_ == 0], minlength=nb)
     sell = np.bincount(k_[side_ == 1], weights=qty_[side_ == 1], minlength=nb)
     nz = np.nonzero((buy > 0) | (sell > 0))[0]
-    cd = np.column_stack([[fmt_t(base + k * bw, hrs) for k in nz], buy[nz], sell[nz], buy[nz] - sell[nz]]) if len(nz) else None
-    for name, v, col in (('Buy aggressor', buy[nz], UP), ('Sell aggressor', -sell[nz], DOWN)):
-        fig.add_trace(go.Bar(x=(base + (nz + 0.5) * bw) * 1000, y=v, width=bw * 1000 * 0.9, name=name, marker_color=col, showlegend=False, customdata=cd,
-                             hovertemplate='%{customdata[0]}<br>buy %{customdata[1]:,}  sell %{customdata[2]:,}  net %{customdata[3]:,}<extra></extra>'),
-                      row=2, col=1)
+    if len(nz):
+        # Standard volume pane: one bar per candle slot, total traded lots, coloured by which side was more aggressive.
+        cd = np.column_stack([[fmt_t(base + k * bw, hrs) for k in nz], buy[nz], sell[nz], buy[nz] - sell[nz]])
+        fig.add_trace(go.Bar(x=ts(centres[nz]), y=buy[nz] + sell[nz], width=bw * 1e3 * 0.8, name='Volume', showlegend=False, customdata=cd,
+                             marker=dict(color=np.where(buy[nz] >= sell[nz], UP, DOWN), opacity=0.7, line_width=0),
+                             hovertemplate='%{customdata[0]}<br>volume %{y:,}<br>buy %{customdata[1]:,}  sell %{customdata[2]:,}  net %{customdata[3]:,}'
+                                           '<extra></extra>'), row=2, col=1)
 
     style_time_axes(fig, hrs)
-    fig.update_xaxes(range=[x0 * 1000, x1 * 1000], rangeslider_visible=False)
-    fig.update_yaxes(tickformat=',.2~f', row=1, col=1)
-    fig.update_yaxes(title_text='lots', row=2, col=1)
-    fig.update_layout(height=560, margin=dict(l=50, r=10, t=10, b=30), paper_bgcolor=CLEAR, plot_bgcolor=CLEAR, dragmode='zoom', barmode='relative',
-                      hovermode='closest', uirevision=revision, shapes=cursor_shapes(t, x1),
+    fig.update_xaxes(range=[ts1(x0), ts1(x1)], rangeslider_visible=False, **SPIKE)
+    fig.update_yaxes(side='right', tickformat=',.2~f', **SPIKE, row=1, col=1)
+    fig.update_yaxes(side='right', rangemode='tozero', tickformat=',~s', title_text='lots', row=2, col=1)
+    fig.update_layout(height=560, margin=dict(l=10, r=60, t=10, b=30), paper_bgcolor=CLEAR, plot_bgcolor=CLEAR, dragmode='zoom', bargap=0.2,
+                      hovermode='closest', hoverdistance=30, spikedistance=-1, uirevision=revision, shapes=cursor_shapes(t, x1),
                       legend=dict(orientation='h', y=1.0, x=0, yanchor='bottom', font_size=11))
     if capped:
-        fig.add_annotation(text='trade markers subsampled', xref='paper', yref='paper', x=1, y=1.0, yanchor='bottom', xanchor='right', showarrow=False,
+        fig.add_annotation(text=f'{b - a:,} trades in view: trade markers hidden, pick a shorter window', xref='paper', yref='paper', x=1, y=1.0, yanchor='bottom', xanchor='right', showarrow=False,
                            font=dict(size=10), opacity=0.6)
     return fig
 
 
 def nav_fig(nx: np.ndarray, ny: np.ndarray, x0: float, x1: float, t: float, hrs: bool) -> go.Figure:
-    fig = go.Figure(go.Scatter(x=nx * 1000, y=ny, mode='lines+markers', line=dict(color='rgba(128,128,128,0.8)', width=1),
+    fig = go.Figure(go.Scatter(x=ts(nx), y=ny, mode='lines+markers', line=dict(color='rgba(128,128,128,0.8)', width=1),
                                marker=dict(size=7, opacity=0), selected=dict(marker=dict(opacity=0)), unselected=dict(marker=dict(opacity=0)),
                                hoverinfo='skip'))
-    fig.update_layout(height=110, margin=dict(l=50, r=10, t=4, b=24), paper_bgcolor=CLEAR, plot_bgcolor=CLEAR, showlegend=False, uirevision='nav',
-                      shapes=[dict(type='rect', xref='x', yref='paper', x0=x0 * 1000, x1=x1 * 1000, y0=0, y1=1, fillcolor='rgba(245,197,66,0.15)', line_width=0),
-                              dict(type='line', xref='x', yref='paper', x0=t * 1000, x1=t * 1000, y0=0, y1=1, line=dict(color=ACCENT, width=1.5))])
+    fig.update_layout(height=110, margin=dict(l=10, r=60, t=4, b=24), paper_bgcolor=CLEAR, plot_bgcolor=CLEAR, showlegend=False, uirevision='nav',
+                      shapes=[dict(type='rect', xref='x', yref='paper', x0=ts1(x0), x1=ts1(x1), y0=0, y1=1, fillcolor='rgba(245,197,66,0.15)', line_width=0),
+                              dict(type='line', xref='x', yref='paper', x0=ts1(t), x1=ts1(t), y0=0, y1=1, line=dict(color=ACCENT, width=1.5))])
     style_time_axes(fig, hrs, fixedrange=True)
-    fig.update_yaxes(fixedrange=True, tickformat=',.2~f', nticks=3)
+    fig.update_yaxes(fixedrange=True, tickformat=',.2~f', nticks=3, side='right')
     return fig
 
 
@@ -295,7 +345,7 @@ def depth_fig(book: engine.Book, ticks: int = 40) -> go.Figure:
 def cumulative_fig(r: engine.Replay, t: float, t0: float, hrs: bool, revision: str) -> go.Figure:
     T = len(r.t_ev)
     idx = np.arange(0, T + 1, max(1, T // 4000))
-    tx = np.concatenate([[t0], r.t_time])[idx] * 1000
+    tx = ts(np.concatenate([[t0], r.t_time])[idx])
     fig = go.Figure()
     for name, rows_, col in (('Buy aggressor', (0, 2), UP), ('Sell aggressor', (1, 3), DOWN)):
         fig.add_trace(go.Scatter(x=tx, y=r.cum_qty[list(rows_)].sum(0)[idx], name=name, line=dict(color=col, shape='hv', width=1.5)))
@@ -524,6 +574,7 @@ def view(r: engine.Replay, source: str, opts: dict) -> None:
 
 # ---------------------------------------------------------------- app
 st.markdown(CSS, unsafe_allow_html=True)
+components.html(MIDDLE_PAN_JS, height=0)
 with st.sidebar:
     st.header('Data')
     files = sorted((ROOT / 'data').glob('*.csv'))

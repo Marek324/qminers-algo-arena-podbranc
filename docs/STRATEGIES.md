@@ -144,6 +144,18 @@ Round 1, hidden-price version (current settings: `K_S` 0.75, `S_ALPHA` 0.1, `K_I
 - `S_ALPHA` 0.08–0.12 with `K_S` 0.5–0.75 all score 293–309k per half; the two halves rank settings the same way.
 - PnL is 74–83k in every 25-minute slice and never goes below 0.
 
+Tested after the generator forensics in [DATA_ANALYSIS.md](DATA_ANALYSIS.md) (all on the first half of round 1; current strategy = 309,298 there). **None beat the current settings, so the strategy is unchanged.**
+
+| Idea from the forensics | Offline result | Backtest, 1st half |
+|---|---|---|
+| One average of corrected readings (buy p → p + 1.11, sell q → q − 1.11) instead of per-side averages | R² at 0.5 s: 0.226 against 0.192 | best 305,351 (`S_ALPHA` 0.05) |
+| Bayesian grid filter on S with the exact X distribution and clamped orders | R² at 0.5 s: **0.253** | best 292,890 (`S_VOL` 0.5); also about 60% slower |
+| Through-sweeps as a fast S reading (an IOC that trades at two levels) | mid +0.61 after 5 ms, **+0.87 after 5 s and holds**; a level emptied without going through reverts (+0.44 → +0.08) | +2k at a small weight (noise), up to −82k at larger ones: most of the move happens inside our 5 ms latency |
+| Don't keep orders one level behind (IOCs reach one tick through when S is near) | | `KEEP_LEVELS` 0: 309,389, no change |
+
+- **A better S forecast doesn't mean more PnL here.** The strategy only uses S to decide whether to step back a tick or cross in, and the smoother per-side average decides that better than the sharper estimators.
+- The experimental code (estimator modes and the sweep term) is not in the strategy file. It was kept out to keep the submission lean.
+
 ## 4. Ideas not yet tried
 
 - **Switch strategy by market type.** Measure how far the mid moves in the 2–3 s after IOCs. If it moves a lot, follow the flow; if not, market-make. That would handle both samples.
@@ -152,3 +164,30 @@ Round 1, hidden-price version (current settings: `K_S` 0.75, `S_ALPHA` 0.1, `K_I
 - **Sharper S estimate.** Use a half-life of 100–200ms; the mid closes half its gap to S in about 200–260ms. Add IOCs that sweep past the best price as a second, faster reading of S, since IOCs are priced at S ± 1. See [DATA_ANALYSIS.md](DATA_ANALYSIS.md).
 - **Get back to flat at zero edge** when inventory is pinned at ±100, so both sides can quote again.
 - **End of round:** flatten near the end to avoid paying the spread on leftover inventory. We don't know the round length, so we would need a time guess or a rule that only uses the recent past.
+
+## 5. `adaptive_mm` vs `imbalance_mm` (round 1)
+
+`adaptive_mm` (colleague) made 650,611 on round 1 against our 615,583. Its maker leg is a rebuild of `imbalance_mm`, tuned on the full round 1 with three changes: `EDGE` 0.4 → 0.3, `K_FLOW` 0.5 → 0.8, `FLOW_TAU_US` 200 → 100 ms. Ported into `imbalance_mm`, those three alone reproduce its result to within 300 everywhere.
+
+**Was it overfit?** Checked on fresh sessions from the colleague's fitted generator (`scripts/make_synthetic.py`, never used for tuning):
+
+| Data | Effect of the three changes |
+|---|---|
+| Round 1, each half | +4.6% / +6.7% |
+| 6 new sessions with round 1 parameters | +3.3% (wins 5 of 6) |
+| 2 new sessions, random parameters, IOCs push the price | −3% |
+| 4 new sessions, random parameters, **no push** (like sample_v2) | **−8% to −25%** |
+
+- Not noise: it holds on both halves and on new round-1-like sessions, at about half the in-sample size.
+- But it is specific to one mechanism. In round 1 each IOC pushes the hidden price, so recent aggressive flow predicts the mid (slope +0.74 to +1.0 ticks per unit of flow/depth over 0.5 s). Without push the move reverts (slope −0.10 to −0.21, also on the real sample_v2), and a stronger flow term loses money.
+- Our own `K_FLOW` 0.5 had the same weakness, just milder: with flow off, `imbalance_mm` made more on every no-push session.
+
+**Fix: `FLOW_CHECK`.** The strategy measures the flow → mid slope live (50 ms samples paired with the mid 0.5 s later, decayed over about 5 minutes) and scales `K_FLOW` from 0 (slope ≤ 0) to full (slope ≥ `FLOW_SLOPE_FULL` = 0.5). `FLOW_SLOPE_FULL` 0.25 / 0.5 / 1.0 change generated-session PnL by under 0.6%.
+
+| | Round 1 | Round-1-like (sum of 6) | Random, push on (avg of 2) | Random, no push (avg of 4) | sample_v2 |
+|---|---|---|---|---|---|
+| `adaptive_mm` | 650,611 | 325,574 | 54,646 | 66,865 | 242,079 |
+| `imbalance_mm`, previous | 615,583 | 317,603 | 56,714 | 77,128 | 261,124 |
+| **`imbalance_mm`, current** (3 changes + `FLOW_CHECK`) | **650,838** | **330,647** | 54,756 | **89,783** | **285,036** |
+
+The current version matches the colleague on round 1, beats it on fresh round-1-like sessions, and loses far less when the next round has no push. It also runs in about 90 s on round 1 against about 125 s.

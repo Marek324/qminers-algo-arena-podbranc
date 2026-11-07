@@ -66,6 +66,6 @@ uv run backtest-explorer --log-dir logs/<run>    # needs a full-logs run
 - Analyze a tape before writing a strategy: `uv run analysis.py data/<file>.csv` writes `logs/analysis/<file>.json` and `.txt`. Report contents and schema: [docs/ANALYSIS.md](docs/ANALYSIS.md).
 - Check a strategy for overfitting before trusting its score: `uv run python scripts/robustness.py strategies/<mine>.py` runs it on every tape in data/, over time chunks, on a mirrored market and reshuffled sessions (`--sensitivity all` adds parameter nudges); the dashboard's Robustness tab shows the report.
 - The score is `pnl` in `logs/<run>/result.json`. Also check `breach_penalty` (should be 0) and the `abs_inventory_q*` quantiles.
-- `data/sample.csv` is synthetic and trends. The real rounds are recorded market data and look nothing like it, so don't tune to the sample.
+- `data/sample.csv` is synthetic and trends, and the real rounds look nothing like it, so don't tune to the sample. The deck calls the rounds "recorded market data", but analysis shows `round1` is synthetic too. It comes from the same engine as `sample_v2.csv`, with different parameters. The generator, its fitted parameters and the strategy implications are in [docs/DATA_ANALYSIS.md](docs/DATA_ANALYSIS.md). Expect parameters to change between rounds, so estimate them online instead of hard-coding them.
 - Before submitting, check the file only uses allowed imports and builtins, then run a full backtest of that exact file.
 - Submit at arena.qminers.com → Dashboard → Submit strategy (done by a human).

@@ -12,7 +12,7 @@ The constraints that decide which papers matter:
 - **±100 inventory limit with a $10k/s penalty, and leftover inventory is sold at markout.** Inventory has to be skewed back toward flat, which is exactly what the classic market-making models do.
 - **Pure Python, called on every event, no saved files.** Linear and logistic models with hard-coded coefficients are fine. Deep nets and RL agents are not practical to run per event, and we have nowhere to load trained weights from.
 - **One instrument.** Cross-asset signals don't apply.
-- **The real rounds look nothing like `sample.csv`.** Prefer robust, low-parameter ideas over fitted ones.
+- **The real rounds look nothing like `sample.csv`.** Prefer robust, low-parameter ideas over fitted ones. `round1` comes from the same engine as `sample_v2`, with a hidden fair price that the mid chases, a spread of 1 tick 93% of the time, and pure-noise IOC sides. Generator and parameters: [DATA_ANALYSIS.md](DATA_ANALYSIS.md).
 
 ## Tier 1: build on these
 
@@ -136,7 +136,7 @@ The check settings sit on a flat region: `EDGE_FULL` 20 to 150 and a decay of 5 
 ## Suggested build order
 
 1. **Baseline maker.** Join the best bid and ask with small size, skew against inventory, hard cap at about ±50 including resting and in-flight orders, and flatten near the end of the run. Measure PnL and `breach_penalty`.
-2. **Add a fair value.** Imbalance/microprice decides which side to quote and when to step back a tick (Gould–Bonart, Stoikov).
+2. **Add a fair value.** Imbalance/microprice decides which side to quote and when to step back a tick (Gould–Bonart, Stoikov). On these tapes the strongest fair value is the generator's hidden price S. It can be estimated from new limit-order prices with a 100–200ms half-life, and it predicts the mid 0.5s ahead with R² of about 30%. See [DATA_ANALYSIS.md](DATA_ANALYSIS.md).
 3. **Add OFI and recent-trade-intensity filters** to pull the side about to be run over (Cont–Kukanov–Stoikov, Hawkes idea).
 4. **Queue-aware rules.** Keep early queue positions and use `modify_order` instead of cancel and re-post (Market Maker's Dilemma, Moallemi–Yuan).
 5. **Only then** try taking liquidity, and only when the predicted move covers the spread.

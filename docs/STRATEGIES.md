@@ -38,7 +38,7 @@ IMC Prosperity is IMC's yearly student trading competition. Bots trade simulated
 | 2 | **Market making around fair.** Quote just inside the best bid and ask while keeping positive edge. Edge found by grid search. | Both 2nd-place teams | Same | LIMIT | **Yes.** This is our main strategy on v2 |
 | 3 | **Fair price from the big orders.** Use the mid of the large, steady orders ("wall mid") or of the main market-maker bot, not the noisy best-price mid. | Frankfurt Hedgehogs (wall mid on Kelp). Linear Utility (the bot quoting 20–30 lots on Starfruit; they confirmed the scorer used that price). | Order book levels and sizes | none (it's a signal) | **Yes.** We see every order and its size. Our version is the size imbalance at the best bid and ask. |
 | 4 | **Get back to flat at zero edge.** Trade at exactly fair to reduce inventory and free room under the position limit. | Linear Utility (about +3% PnL) | Amethysts | LIMIT or IOC | **Yes.** It matters more here: ±100 limit, and leftover inventory is valued by selling into the book at the end |
-| 5 | **Follow the informed trader.** Copy a bot that bought at the daily low and sold at the daily high. | Frankfurt Hedgehogs (Squid Ink, "Olivia") | Trades, later trader IDs | IOC | **Partly.** There are no trader IDs, but each tape row shows whether an order is IOC or resting and how big it is. On the first sample, IOCs predicted a 10-tick move (section 2). On v2 they predict almost nothing. |
+| 5 | **Follow the informed trader.** Copy a bot that bought at the daily low and sold at the daily high. | Frankfurt Hedgehogs (Squid Ink, "Olivia") | Trades, later trader IDs | IOC | **Partly.** There are no trader IDs, but each tape row shows whether an order is IOC or resting and how big it is. On the first sample, IOCs predicted a 10-tick move (section 2). On v2 they predict almost nothing. IOC *sides* are coin flips, but IOC *prices* follow the hidden fair price (see DATA_ANALYSIS.md). |
 | 6 | **Mean reversion with a z-score or EMA.** Trade back toward a moving average at fixed thresholds. | Several teams (Squid Ink, Volcanic Rock) | Mid price history | IOC | **Weak.** Mixed results even at IMC. On v2 the price is a random walk with a slight trend, so not worth it |
 | 7 | Basket vs parts arbitrage | Both 2nd-place teams (Picnic / Gift baskets) | Several related products | IOC | **No.** One instrument |
 | 8 | Options: volatility trading and delta hedging | Both 2nd-place teams | Vouchers / coupons on an underlying | IOC + hedge | **No.** No options |
@@ -82,6 +82,7 @@ Analysis scripts: `scripts/record_book.py` (replays a tape through the engine an
 - The tape is synthetic (see [DATA_ANALYSIS.md](DATA_ANALYSIS.md)): limit orders are placed around a **hidden fair price S** that the mid lags by about 0.5 s. A running mean of new limit-order prices (each side averaged) estimates S. Offline, S estimate − mid explains 22% of the next 0.5 s mid move, against 11% for touch imbalance.
 - Best strategy: **market making around the S estimate, crossing in when the signal is strong**. `imbalance_mm.py` makes **615,583**, about 44% of the ceiling.
 - `adaptive_mm.py` makes 195,037; `flow_momentum.py` loses 5,142,910.
+- More from the generator analysis: mid volatility is 0.92 ticks/√s, about 1.85× v2. IOCs are priced at S ± 1 tick, so 46% go one tick through the best price, against 22% on v2. Limit sizes are heavy-tailed (1 to 124k, median 14). 13% of cancels hit orders that were already filled; those are no-ops, so don't read cancels as queue thinning.
 
 ## 3. Our strategies
 
@@ -148,5 +149,6 @@ Round 1, hidden-price version (current settings: `K_S` 0.75, `S_ALPHA` 0.1, `K_I
 - **Switch strategy by market type.** Measure how far the mid moves in the 2–3 s after IOCs. If it moves a lot, follow the flow; if not, market-make. That would handle both samples.
 - **Better fair price.** Include deeper levels. (Recent aggressive flow is now in, as `K_FLOW`.)
 - **Queue position.** Back-of-queue orders mostly fill when a big order empties the level, which is the bad case. Pulling orders that are deep in a long queue when the opposite side is building could avoid those fills.
+- **Sharper S estimate.** Use a half-life of 100–200ms; the mid closes half its gap to S in about 200–260ms. Add IOCs that sweep past the best price as a second, faster reading of S, since IOCs are priced at S ± 1. See [DATA_ANALYSIS.md](DATA_ANALYSIS.md).
 - **Get back to flat at zero edge** when inventory is pinned at ±100, so both sides can quote again.
 - **End of round:** flatten near the end to avoid paying the spread on leftover inventory. We don't know the round length, so we would need a time guess or a rule that only uses the recent past.

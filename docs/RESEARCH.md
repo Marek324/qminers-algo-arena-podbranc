@@ -942,3 +942,9 @@ generator's order flow does not reproduce how the real market responds to aggres
 inventory settings cannot be tuned on generated tapes. The twin is trustworthy for its price path (jump timing, storm
 share), not its order flow. No change to hmm_mm_v2. Next step for the twin: make the generated flow → price response
 match the real one (on round2_public a quiet flow weight of 0.8 beats 0.5), then repeat the screen.
+
+**Validation result of the twin-tuned test version** (`strategies/hmm_mm_v2_twin.py`: K_FLOW 0.5, K_INV 0.001,
+EDGE_TAKE 0.35, SIG_V 15): **1,293,574** on arena validation against hmm_mm_v2's 1,291,224, a tie. The first twin
+predicted about +135k, round2_public about −16% (−83k on 515k); the real effect was +2k. Neither guide transferred:
+the twin overstated the gain and the half-length public tape overstated the loss. hmm_mm_v2 stays; settings that
+move order-flow and inventory behaviour need a real tape (or a twin whose flow response is checked against one).

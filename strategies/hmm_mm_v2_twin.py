@@ -8,6 +8,8 @@ Expected, from local backtests:
 - validation twin (first version, since replaced by scripts/path_twin.py; the validation session's real price path): +139k (seed 1) and +135k (seed 2)
   over hmm_mm_v2. If the twin is right, validation about 1.29M + 0.13M = 1.42M.
 - real round2_public: 432,669 against 515,547 (-83k, -16%), no penalty. If public is the better guide, validation about 1.08M.
+Arena validation result: 1,293,574 against hmm_mm_v2's 1,291,224, a tie (+2k, well inside the ~40k noise). Neither
+the twin's +135k nor public's -16% transferred: keep hmm_mm_v2.
 The generated order flow favours these settings on any generated tape, so a score near 1.08M means generated tapes
 cannot be used for tuning flow and inventory settings; near 1.42M means they can.
 

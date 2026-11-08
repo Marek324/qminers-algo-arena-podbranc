@@ -1403,3 +1403,19 @@ r −0.086 at 1 s when the counting second overlaps the move, −0.029 / −0.01
 **Combinations on r4m_mldi** (`scripts/grid_combo.txt`, `grid_combo2.txt`; full 1,204,809): 18 single nudges (storm
 take edge, S weight, flow, momentum, quiet momentum, DIMB on top, far band, edge sizing, quote pull, weak size, take
 size, P_ON) all within −24k / +1.4k; the top four stacked 1,201k–1,202k. r4m_mldi sits on a flat top.
+
+### Round 4: using the volatility spectrum (online vol on r4m_mldi, rejected, 2026-11-08)
+
+Volatility clusters for about 100 s (spectrum knee), so `r4m_mldi.py` got an online vol estimate (EWMA of squared
+1 s mid moves, VOL_TAU_S 60 s) and three switches, all off by default (base reproduces 1,204,809; `scripts/grid_vol.txt`):
+
+| switch | full | quarters vs base |
+|---|---|---|
+| storm SIG_V = k · vol, k 0.8 / 1.0 / 1.2 / 1.5 | 1,204k / 1,188k / 1,182k / 1,154k | k 0.8: −8.2k / +4.1k / +3.6k / −0.9k |
+| k 1.0 with tau 30 / 120 s | 1,201k / 1,188k | down in q1 |
+| depth-imbalance term only when vol ≥ 6 / 8 / 10 / 12 | 1,163k–1,164k | q1 −23k, q2 −20k, q4 +4k |
+| storm take edge × sqrt(vol / ref), ref 8 / 10 / 12 | 1,183k / 1,173k / 1,170k | down in q1–q3 |
+
+The fixed SIG_V 10 and take edge are already right on average, and gating the depth term on vol throws its gain away
+(it pays in moderate storms too; the vol estimate lags storm onsets). The volatility structure is already used
+through the HMM regime.

@@ -1419,3 +1419,16 @@ Volatility clusters for about 100 s (spectrum knee), so `r4m_mldi.py` got an onl
 The fixed SIG_V 10 and take edge are already right on average, and gating the depth term on vol throws its gain away
 (it pays in moderate storms too; the vol estimate lags storm onsets). The volatility structure is already used
 through the HMM regime.
+
+### Round 4: storm-onset quote defence from the vol forecast (rejected, 2026-11-08)
+
+`r4m_mldi.py` switches (off by default; `scripts/grid_pw.txt`): while P(storm) ≥ PW_LO (below P_ON 0.3) or realized
+vol ≥ VW_VMIN, widen quiet quotes by PW_EDGE or quote only the inventory-reducing side. Full tape (base 1,204,809):
+P(storm) 0.1 / 0.15 / 0.2 with +0.3 / +0.6 ticks 1,199k–1,206k (quarters within ±1k, except 0.1 / +0.3 q3 −6.7k and
+0.2 / +1.0 q2 −9.7k); reduce-only 1,204.7k–1,204.8k; vol ≥ 3 / 5 with +0.5 1,179k / 1,179k; vol ≥ 5 / 8 reduce-only
+1,185k / 1,198k. The HMM crosses 0.1 → 0.3 within moments of an onset, so the warning window holds few quotes; a vol
+trigger lags and cuts quiet turnover.
+
+Why a vol forecast pays so little here: the only instrument is the asset itself with a ±100 cap. A vol forecast earns
+through vol-sensitive payoffs (options) or through size, and in storms the size is already pinned at the cap. The
+forecast's one use, switching quiet making / storm taking at the right moment, is what the HMM already does.

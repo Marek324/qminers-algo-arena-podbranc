@@ -1370,3 +1370,16 @@ taker. The ceiling is small anyway: −100 lots held through the whole public ta
 are exponential, so order age says nothing about the remaining life; the final mark is a liquidation sweep against
 market orders only (our orders cannot move it; ending flat would save only the sweep cost, hundreds of dollars); the breach
 penalty is integrated continuously. The order-id gaps are the one leak, and the sniper already uses them.
+
+### Round 4: long-shot candidate r4m_mldi (2026-11-08, chosen for public-tape PnL, no robustness gate)
+
+The team asked for the highest public number, accepting light overfit. `strategies/round4/r4m_mldi.py` = r4m_risk_a
++ weak 2-id jump tier + storm distance-weighted depth imbalance (V_K_MLDI 0.6, λ 2) + Jaro's quote hysteresis
+(EDGE_NEW 0.3, EDGE 0.15). **round4_public 1,204,809** (penalty 8,838; exact file re-run), quarters 344,258 / 314,775 /
+297,613 / 247,518 (vs r4m_risk_a +27.0k / +24.7k / +0.3k / −2.9k).
+
+Stacking grid (`scripts/grid_mldi.txt`, `grid_stack.txt`, full tape): V_K_MLDI 0.4 / 0.5 / 0.6 / 0.75 → 1,159k /
+1,197k / 1,199k / 1,198k; λ 2 / 3 / 4 at 0.6 → 1,200k / 1,199k / 1,199k; + H_LR 0.001 1,171k–1,184k; + hysteresis
+1,204,809 (EDGE_NEW 0.25: 1,203,757); + pre-storm lean K_PRE 0.5 / 1 / 2 (`r4m_aggr` logic) 1,191k / 1,174k / 1,191k.
+Expected gain on the hidden tapes is smaller than on public (the depth term is first-half only on this tape; paired
+robustness of the 0.5 version: chunks 3 / 6 up, bootstrap 3 / 8 up).

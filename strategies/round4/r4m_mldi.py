@@ -100,6 +100,13 @@ class R4mMldiStrategy(BaseStrategy):
     K_FAR = 0.0          # depth imbalance of the band FAR_LO..ML_DEPTH ticks behind the best, quiet
     V_K_FAR = 0.0        # same, storm
     FAR_LO = 5
+    # online volatility (EWMA of squared 1 s mid moves, VOL_TAU_S; volatility clusters for about 100 s)
+    VOL_TAU_S = 60.0
+    SIGV_K = 0.0         # >0: storm process noise SIG_V = SIGV_K * realized vol, clamped to [SIGV_MIN, SIGV_MAX]
+    SIGV_MIN = 4.0
+    SIGV_MAX = 25.0
+    MLDI_VMIN = 0.0      # >0: storm depth-imbalance term only while realized vol >= this (ticks / sqrt s)
+    VET_REF = 0.0        # >0: storm take edge scaled by sqrt(realized vol / VET_REF)
     # storm-end hazard: storms are regular (mean 84 s, CV 0.44), so lean against the position as the storm ages
     V_HZ = 0.0           # ticks per lot at full age
     HZ_US = 90_000_000   # age (since p_vol crossed P_ON) at which the lean is full
@@ -258,6 +265,11 @@ class R4mMldiStrategy(BaseStrategy):
         self.ofi = 0.0
         self.mlofi = 0.0
         self.in_storm = False
+        self.vol2 = 0.0
+        self.vol_t = 0
+        self.vol_mid = 0.0
+        self.vol = 0.0
+        self.sig_v = self.SIG_V
         self.pre_q: deque = deque()
         self.pre_net = 0.0
         self.storm_t = 0
@@ -307,6 +319,18 @@ class R4mMldiStrategy(BaseStrategy):
         while snapshot.timestamp_us - mq[0][0] > self.MOM_US:
             mq.popleft()
         mom = mid - mq[0][1]
+        ts_ = snapshot.timestamp_us
+        if not self.vol_t:
+            self.vol_t, self.vol_mid = ts_, mid
+        elif ts_ - self.vol_t >= 1_000_000:
+            dt_s = (ts_ - self.vol_t) / 1e6
+            a = 1.0 - math.exp(-dt_s / self.VOL_TAU_S)
+            dmv = mid - self.vol_mid
+            self.vol2 += a * (dmv * dmv / dt_s - self.vol2)
+            self.vol = math.sqrt(self.vol2)
+            self.vol_t, self.vol_mid = ts_, mid
+            if self.SIGV_K:
+                self.sig_v = min(self.SIGV_MAX, max(self.SIGV_MIN, self.SIGV_K * self.vol))
         self._unwind(snapshot.timestamp_us, bb, ba)
         now = snapshot.timestamp_us
         if not self.s:
@@ -382,7 +406,8 @@ class R4mMldiStrategy(BaseStrategy):
         if self.ml_on:
             mldi, wmp, mlofi, far = self._ml(bids, asks, bb, ba, mid, now)
         ml_q = self.K_MLDI * mldi + self.K_WMP * wmp + self.K_MLOFI * mlofi + self.K_FAR * far
-        ml_v = self.V_K_MLDI * mldi * ((ba - bb) * 0.5 if self.ML_SPREAD else 1.0) + self.V_K_WMP * wmp + self.V_K_MLOFI * mlofi + self.V_K_FAR * far
+        kml = self.V_K_MLDI if (not self.MLDI_VMIN or self.vol >= self.MLDI_VMIN) else 0.0
+        ml_v = kml * mldi * ((ba - bb) * 0.5 if self.ML_SPREAD else 1.0) + self.V_K_WMP * wmp + self.V_K_MLOFI * mlofi + self.V_K_FAR * far
 
         storm = self.pv >= self.P_ON
         if storm and not self.in_storm:
@@ -436,12 +461,13 @@ class R4mMldiStrategy(BaseStrategy):
             fair -= self.V_HZ * min(1.0, (now - self.storm_t) / self.HZ_US) * self.inv
         if self.V_K_PJ and now - self.pj_t < self.PJ_US:
             fair += self.V_K_PJ * self.pj_sign
-        if fair - ba >= self.V_EDGE_TAKE:
+        vet = self.V_EDGE_TAKE * (math.sqrt(max(self.vol, 1e-9) / self.VET_REF) if self.VET_REF else 1.0)
+        if fair - ba >= vet:
             q = self.V_QTY if (not self.ESZ_FULL or fair - ba >= self.ESZ_FULL) else int(self.V_QTY * self.ESZ_FRAC)
             self._side(1, math.floor(fair - self.V_EDGE_TAKE) if self.V_SWEEP else ba, q)
         else:
             self._clear(1)
-        if bb - fair >= self.V_EDGE_TAKE:
+        if bb - fair >= vet:
             q = self.V_QTY if (not self.ESZ_FULL or bb - fair >= self.ESZ_FULL) else int(self.V_QTY * self.ESZ_FRAC)
             self._side(-1, math.ceil(fair + self.V_EDGE_TAKE) if self.V_SWEEP else bb, q)
         else:
@@ -471,7 +497,7 @@ class R4mMldiStrategy(BaseStrategy):
         # Kalman: predict
         dt = (now - self.kf_t) / 1e6
         self.kf_t = now
-        sig2 = (1.0 - pv) * self.SIG_Q * self.SIG_Q + pv * self.SIG_V * self.SIG_V
+        sig2 = (1.0 - pv) * self.SIG_Q * self.SIG_Q + pv * self.sig_v * self.sig_v
         self.P += sig2 * max(dt, 0.0)
         # learned gap between new orders and S, per state
         d = -sign * (self.s - price)   # outward distance from S_hat

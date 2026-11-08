@@ -2,10 +2,12 @@ Podbranč
 
 ===
 
-4x Opus 5.5 High
+3x Opus 5.5 High
+1x Opus 5.5 Medium
 2x Gemini Flash
 2x Gemini Argon
 2x Kimi-k3.1 pro
+1x GLM 5.3
 
 
 ===

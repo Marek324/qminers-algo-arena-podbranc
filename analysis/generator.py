@@ -62,6 +62,7 @@ class GenParams:
     ioc_sizes_file: str = ''
     impact_k: float = 0.0  # permanent S move per IOC: impact_k * size ** impact_beta ticks
     impact_beta: float = 0.5
+    ioc_couple: float = 0.0  # with s_path: IOC sides lean toward the path's move in their 1 s sample (P(buy) = 0.5 + k * z)
     x_dist: str = 'normal'  # 'normal' | 'lognormal' | 'gamma'
     x_a: float = 0.0
     x_b: float = 0.0
@@ -182,6 +183,16 @@ def generate(p: GenParams, seed: int = 0, duration_s: float | None = None,
     n_ioc = len(t_ioc)
     ioc_side = rng.integers(0, 2, n_ioc)
     ioc_qty = rng.choice(ioc_sizes, n_ioc)
+    if s_path is not None and p.ioc_couple > 0 and n_ioc:
+        # couple the generated takers to the real path: in each sample interval they lean toward the side the path moves,
+        # so the generated flow drives the path the way real flow does (impact, reversion and touch toxicity follow)
+        pt, ps = s_path
+        dp = np.diff(ps)
+        calm = np.abs(dp) < jump_ticks
+        sd = max(float(dp[calm].std()) if calm.any() else 1.0, 0.5)
+        k = np.clip(np.searchsorted(pt, t_ioc, 'right') - 1, 0, len(dp) - 1)
+        p_buy = np.clip(0.5 + p.ioc_couple * dp[k] / sd, 0.05, 0.95)
+        ioc_side = (rng.random(n_ioc) >= p_buy).astype(ioc_side.dtype)  # 0 = buy
     # S at every insert time: one random walk sampled at the merged insert times, plus each IOC's permanent push,
     # which takes effect right after that IOC (the IOC itself is priced off the book, not S)
     t_all = np.concatenate([t_lim, t_ioc])

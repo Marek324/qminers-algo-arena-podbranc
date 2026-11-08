@@ -30,9 +30,10 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'scripts'))
 from analysis.generator import PARAM_DIR, GenParams, generate, write_tape  # noqa: E402
+from estimate_model import with_gamma_x  # noqa: E402
 from path_twin import mid_from_probes, regimes_from_path  # noqa: E402
 
-OUT = ROOT / 'logs' / 'twin_cal'
+OUT = ROOT / 'logs' / 'twin_cal2'
 
 
 def anchors(d: Path) -> list[Path]:
@@ -97,10 +98,9 @@ def main() -> None:
     print(f'{len(anchs)} anchors; path {t[-1]:.0f} s from {long_dir.name} / {short_dir.name}', flush=True)
 
     grid = {
-        'limit_rate': (1.0,),
+        'ioc_couple': (0.0, 0.15, 0.3),
         'ioc_rate': (1.0, 1.3),
         'x_mean': (0.8, 1.0),
-        'impact_k': (0.6, 1.0),
     }
     combos = [dict(zip(grid, v, strict=True)) for v in itertools.product(*grid.values())]
     OUT.mkdir(parents=True, exist_ok=True)
@@ -114,9 +114,9 @@ def main() -> None:
         i, c = i_c
         tape = OUT / f'twin_{i}.csv'
         if not tape.exists():
-            p = replace(base, limit_rate=base.limit_rate * c['limit_rate'], ioc_rate=base.ioc_rate * c['ioc_rate'],
-                        ioc_rate_storm=(base.ioc_rate_storm or base.ioc_rate) * c['ioc_rate'],
-                        x_mean=base.x_mean * c['x_mean'], impact_k=base.impact_k * c['impact_k'])
+            p = replace(base, ioc_rate=base.ioc_rate * c['ioc_rate'], ioc_couple=c['ioc_couple'],
+                        ioc_rate_storm=(base.ioc_rate_storm or base.ioc_rate) * c['ioc_rate'], impact_k=base.impact_k * 0.6)
+            p = with_gamma_x(p, base.x_mean * c['x_mean'], base.x_std)  # X is drawn from the gamma shape, not x_mean
             df, _, _ = generate(p, seed=a.seed, duration_s=float(t[-1]), s_path=(t, s), jump_ticks=20.0, regimes=reg)
             write_tape(df, tape)
         return tape
@@ -151,9 +151,9 @@ def report(R: pd.DataFrame, combos: list, anchs: list[Path]) -> None:
         others = R[R.anchor != an.name].groupby('cfg').loss.sum()
         c = int(others.idxmin())
         r = R[(R.cfg == c) & (R.anchor == an.name)].iloc[0]
-        loo.append((an.name, c, r.pnl_real, r.pnl_twin, r.pnl_ratio, r.fills_ratio, r.corr))
-        print(f'  {an.name}: cfg {c}, real {r.pnl_real:,.0f}, predicted {r.pnl_twin:,.0f} (ratio {r.pnl_ratio:.2f}), '
-              f'fills ratio {r.fills_ratio:.2f}, timing corr {r.corr:.2f}')
+        loo.append((an.name, c, r['pnl_real'], r['pnl_twin'], r['pnl_ratio'], r['fills_ratio'], r['corr']))
+        print(f"  {an.name}: cfg {c}, real {r['pnl_real']:,.0f}, predicted {r['pnl_twin']:,.0f} (ratio {r['pnl_ratio']:.2f}), "
+              f"fills ratio {r['fills_ratio']:.2f}, timing corr {r['corr']:.2f}")
     strat = [x for x in loo if abs(x[2]) >= 2000]
     if len(strat) >= 3:
         from scipy.stats import spearmanr

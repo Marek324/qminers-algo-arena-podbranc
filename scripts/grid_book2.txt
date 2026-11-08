@@ -1,0 +1,9 @@
+nofi01_q: K_OFI=-0.1
+nofi025_q: K_OFI=-0.25
+nofi01: K_OFI=-0.1, V_K_OFI=-0.1
+ndimb02_q: K_DIMB=-0.2
+ndimb05_q: K_DIMB=-0.5
+dimb025_v: V_K_DIMB=0.25
+dimb075_v: V_K_DIMB=0.75
+dimb05_v_l3: V_K_DIMB=0.5, DIMB_LEVELS=3
+dimb05_v_l10: V_K_DIMB=0.5, DIMB_LEVELS=10

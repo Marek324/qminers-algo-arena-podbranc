@@ -1459,3 +1459,10 @@ length): full 1,214,033 / same / same / 1,213,959, quarters −0.1k to −4.4k. 
 through the book (`_mark_out_value`), worth about half a spread plus depth on ≤ 100 lots, a few hundred dollars;
 validation runs ended at −27 / −89 / −89 lots. Cash in result.json is the running cash balance, not idle capital:
 there is no capital limit, and |inventory| is at 100 at the median, so the cap is the binding constraint.
+
+### Round 4: vol-forecast quote size alone on r4m_risk_a (rejected, 2026-11-08)
+
+`strategies/round4/r4m_risk_vs.py` (`scripts/grid_vs.txt`): r4m_risk_a + quiet size QTY · clamp(ref / vol, 0.5, max).
+ref 1.5 / 1.2 / 2.0 → full 1,151,856 / 1,146,373 / 1,144,943 (r4m_risk_a 1,156,545); ref 1.5 quarters −5.2k / −1.4k /
++1.3k / +1.7k. Without the hysteresis and depth term of r4m_mldi the size term loses, so v2's +9k from it depends on
+the rest of that file and is fragile.

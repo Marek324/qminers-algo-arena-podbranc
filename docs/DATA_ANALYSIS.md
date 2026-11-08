@@ -302,6 +302,109 @@ The jumps sit inside **volatile spells**. The generator switches abruptly betwee
 - The markout and queue analysis was done on `sample_v2` only.
 - No numbers here come from a backtest. "456k PnL" (a hindsight best case) and "$60–80k" (a rough calculation) from the reports are not achievable estimates.
 
+## round4_public: same order placement, trending price
+
+`data/round4_public.csv` (2026-11-08 06:00 UTC): 6,000 s, 2.40M rows, the same CSV format. Reports:
+`logs/analysis/round4_public.txt` (`analysis.py`), `logs/generator/round4_public_fit.md` (`estimate_model.py`),
+`logs/r4/baum_welch.log` (`scripts/regime_baum_welch.py`), all on the servers. Quarter tapes: `data/q/r4_q1..q4.csv`
+(1,500 s each, cut with awk on `Time`).
+
+**What changed from round3_public** (`analysis.py`):
+
+| | round3_public | round4_public |
+|---|---|---|
+| Limit / IOC inserts per s | 196 / 9.4 | 195 / 9.7 |
+| Spread = 1 tick (time share) | 81.6% | 81.0% |
+| Mid vol at 1 s / 60 s (ticks/√s) | 4.49 / 4.43 | **6.17 / 7.09** |
+| Variance ratio 60 s / 1 s | 0.97 (random walk) | **1.32 (trends at minute scale)** |
+| Strongest 1 s predictor (Spearman) | flow 1 s, +0.20 | **past 1 s return, +0.31** |
+| Out-of-sample R² of the linear feature combo, 1 s | 0.036 | **0.130** |
+| Aggressor sign autocorrelation, lag 1 | +0.05 | +0.13 |
+| Mid move 1 s after an aggressive order | +0.86 | +1.58 |
+| Maker markout at fill / 1 s / 5 s (ticks/lot) | +0.96 / −0.91 / −0.86 | +1.02 / −1.64 / **−2.81** |
+| Hindsight max (combined / making / taking) | 1.99M / 1.92M / 1.17M | 2.51M / 2.44M / 1.63M |
+
+- **Order placement is unchanged.** An offline Baum-Welch fit of the 2-state geometric HMM on the strategy's own
+  observation (half-ticks between each new limit order and the mid) gives nearly the same numbers on both tapes:
+  state means 1.28 / 4.55 (round 3: 1.30 / 4.45), storm about 36% of orders and 33% of the time, and the same values on
+  each half of either tape. The online HMM with the round-3 constants agrees with the offline fit on 97.6% of orders
+  (round 3: 96.7%). The regime filter carries over as it is.
+- **The 2-state geometric HMM is misspecified, in the same way in both rounds.** Fitted storm spells have a median of
+  0.1 s but a CV of 6–7 (1 would be geometric): many one-order blips plus a few long storms. Quiet spells are close to
+  geometric (CV 1.2). This is why capping n (`H_NMAX` 4–5) helps: it stops single far orders from flipping the state.
+- **The price dynamics changed.** Volatility is about 40% higher, moves continue at the minute scale instead of
+  reverting, aggressive flow is more persistent and moves the price twice as far, and resting quotes are picked off
+  much harder (−2.8 ticks/lot at 5 s). That favours taking and leaning with recent moves, and penalises passive
+  quoting and mean-reversion assumptions. The fade ideas rejected on round 3 (`RESEARCH.md`) would be even worse here.
+- **The generator no longer fits.** `estimate_model.py` fit error 89 (round 1: 8.6–15). The impact 60 s after an IOC
+  is 0.96 ticks real against 3.72 generated, maker markout at 1 s −1.64 against −0.68, and the mid changes 6.7 times a
+  second against 4.3. A mechanism is missing (likely momentum or persistent flow in S), so synthetic twins are not
+  trustworthy for round 4 until it is found. Its regime durations (calm 133 s, storm 83 s) and jump rate (0.0083/s)
+  are from the misfit model.
+
+**Transfer screen** (round-3 strategies unchanged on round4_public, all 0 breach penalty, inventory q95 100):
+
+| Strategy | round4_public | round3_public |
+|---|---|---|
+| `hmm_deep_clear_r3` | **1,046,361** | 693,522 |
+| `hmm_vol_clear_nm5` | 1,044,260 | 682,809 |
+| `hmm_deep_clear_ks` | 1,038,048 | 713,244 |
+| `hmm_deep617_r3` | 1,025,533 | 620,473 |
+| `hmm_imm_r3` / `hmm_imm_pon02` / `hmm_imm_sv11` | 1,022,385 / 1,019,446 / 1,018,004 | –, –, 721k |
+| `hmm_617_fit` | 1,018,917 | – |
+| `hmm_mm_r3` / `hmm_mm` (round 2) | 994,146 | 568k |
+| `hmm_mm_v2` (round 2) | 883,717 | – |
+
+The top seven are within 3% of each other (about 42% of the hindsight max; round 3's best was 36%). The round-3
+leader `hmm_imm_sv11` does not keep its lead.
+
+**Momentum by horizon** (Spearman with the forward mid move, 100 ms grid; round 3 → round 4):
+
+| Feature | → 100 ms | → 1 s | → 5 s | → 30 s |
+|---|---|---|---|---|
+| past 1 s return | +0.15 → **+0.28** | +0.13 → **+0.31** | +0.02 → **+0.20** | −0.03 → +0.01 |
+| past 10 s return | +0.02 → +0.10 | −0.02 → +0.10 | −0.09 → +0.02 | −0.13 → −0.14 |
+| flow 1 s | +0.24 → +0.30 | +0.20 → +0.29 | +0.03 → +0.14 | −0.03 → +0.02 |
+
+Variance ratio vs 1 s: 5 s 1.77, **10 s 2.01**, 30 s 1.77, 60 s 1.32, 300 s 1.24 (round 3: 1.14 / 1.07 / 1.01 / 0.97 /
+1.16). Moves continue for 1–5 s, then partly revert at the 30 s scale.
+
+**Where the leader earns** (`scripts/pnl_attribution.py` on a full-logs run of `hmm_deep_clear_r3`, 1,046,361):
+
+| Leg | Lots | Markout/lot 1 s | 5 s | 30 s |
+|---|---|---|---|---|
+| storm takes (at the touch) | 261k | +1.76 | **+2.96** | **+3.61** |
+| quiet takes | 173k | +0.79 | +0.92 | +0.73 |
+| quiet passive at the touch | 551k | +0.12 | +0.13 | −0.17 |
+| quiet passive behind the touch | 57k | +0.07 | −0.10 | +1.89 |
+| storm passive at the touch | 74k | +0.07 | 0.00 | −0.85 |
+
+- Storm seconds (30 s mean |1 s move| above 2× the median) are 38% of the time and earn **844k (81%)**; calm earns 203k.
+- Storm takes that fill us up to the ±100 cap earn **+3.29 ticks/lot** at 5 s (others +2.65): the cap binds on the best
+  trades.
+- The passive leg at the touch earns about nothing by 30 s; it only pays if inventory turns over within seconds.
+- PnL per 10 minutes is +53k to +167k, every block positive; 3% of minutes negative.
+
+**Missed stale-book opportunities** (`scripts/missed_opps.py`: bursts where the best price is ≥ 2 ticks better than the
+mid 2 s later, value capped at 200 lots, hindsight):
+
+| | took | missed with room left | blocked by the ±100 cap |
+|---|---|---|---|
+| storm | 588 bursts, 1,333k | 95, **134k** | 69, 67k |
+| quiet | 452 bursts, 457k | 248, **160k** | 85, 35k |
+
+Missing with room left (294k) is about three times the value the cap blocks (102k). Blocked bursts come with
+inventory already at 99 lots in their direction.
+
+**Leverage economics** (`scripts/lever_econ.py`, tape-only: a jump signal from far-placed new limit orders, an IOC
+taking up to 900 extra lots of stale levels 5 ms later, an IOC exit after the hold, the penalty charged): best hold
+500 ms, about 10 trades per 6,000 s, +13.5k gross and **+8.5k net each, +85k total**; with a 1 s hold +49k. Every
+positive configuration rests on 5–12 events. This trigger fires before the book moves (Jakub's rule in
+[LEVERAGE.md](LEVERAGE.md): reactive IOC chasing after the mid moves lost everywhere on round 3).
+
+**Next:** a momentum term in fair (past 1 s return, stronger flow weight) is the obvious new signal; retune the
+hidden-price σ and the take edges for the higher volatility.
+
 ---
 
 ## Private Evaluation Tape (12,000s Sandbox Reconstruction)

@@ -1028,3 +1028,65 @@ both tapes, t up to −3.7 with overlapping windows). The strategy was `round3_s
 reversal is real on average, but it is a few ticks spread over 20–30 s, while the shift spends the whole ±100
 position on it. That position no longer rides the lag takes worth +0.9 ticks/lot by 5 s, and each flip pays the
 spread. A slow mean-reversion signal cannot compete with the fast lag edge for the same capacity.
+
+## Round 4: structural alternatives (2026-11-08)
+
+From the round 4 analysis in [DATA_ANALYSIS.md](DATA_ANALYSIS.md#round4_public-same-order-placement-trending-price).
+Round 4 is the last round and counts 1.2, and we are 4th, so these are ranked by upside, not safety.
+
+1. **Jump sniper with leverage** (`strategies/round4/r4m_snipe.py`). Far-placed new limit orders show a jump about 6 ms
+   after it happens and before the touch moves. An IOC takes the stale side past the 100 cap, and the excess is
+   closed within 0.5 s. Tape-only estimate: about 10 trades, +85k per 6,000 s. It is the only leverage design that
+   fits Jakub's rule (enter before the move shows; [LEVERAGE.md](LEVERAGE.md)). Risk: about 10 events, and a false
+   900-lot round trip costs 6–30k.
+2. **Momentum rider (a third mode).** Moves continue for 1–5 s (past 1 s return → next 5 s, Spearman +0.20) and
+   partly revert at about 30 s. Instead of quiet market making or storm sniping, hold ±100 in the direction of a
+   strong 1 s move and flatten after about 10–20 s, before the reversal. First step: a momentum lean in fair
+   (`r4m_alt.py` K_MOM / V_K_MOM).
+3. **Taker-only quiet regime** (`r4m_alt.py` Q_PASSIVE 2) or reduce-only quoting (Q_PASSIVE 1). Passive fills at the
+   touch earn about 0 by 30 s (quiet −0.17, storm −0.85 ticks/lot), but they fill the inventory that the takes
+   (+2.96/lot in storm) need. 294k of stale-book bursts are missed with room left.
+4. **Deep passive quotes in quiet.** Quiet passive fills behind the touch earn +1.89 ticks/lot by 30 s (57k lots),
+   the only passive leg that pays. A ladder 1–3 ticks behind, instead of the touch.
+5. **Position target with a 30 s exit clock** (the alpha_target design, revived). It failed on round 3 because the
+   only edge was S_hat − mid. Round 4 has 3.6× the 1 s predictability (R² 0.13 vs 0.036) and a clear 1–5 s
+   continuation / 30 s reversal shape that a target-position design can trade directly.
+6. **Inventory exit timing from the 30 s reversal.** Past 10 s return → next 30 s is −0.14. Lean K_INV, or an exit
+   rule, on how long and how far the position has run, not only on its size.
+
+### Round 4 results (round4_public, 2026-11-08)
+
+Base `r4m_safe` = hmm_deep_clear_r3 with K_S 0.95, SIG_Q 0.8, V_K_S 0.9 (quarter sweeps `sweep_r4a/b`: each one-step
+winner was up in all 4 quarters): **1,073,369**, 0 penalty (hmm_deep_clear_r3 1,046,361).
+
+| Variant | round4_public | penalty | note |
+|---|---|---|---|
+| far-order sniper (`r4m_snipe`, SNIPE_FAR 10, 2 confirming orders) | 1,065,984 | 27,691 | 11 snipes, every filled one +5 to +16 ticks/lot, but fills small |
+| far-order sniper, SNIPE_FAR 15 | 1,082,973 | 3,786 | +10k |
+| **id-gap sniper** (IDG_SNIPE 1) | **1,109,933** | 13,270 | +37k; catches jumps beyond the 20-tick public depth |
+| id-gap + far 15 | 1,124,599 | 11,929 | `r4m_risk_b` |
+| **id-gap + far 15 + momentum 0.1 / 0.5 s** | **1,156,545** | 7,963 | `r4m_risk_a`; robustness 6/6 chunks, mirrored 1,156,881, bootstrap 8/8 |
+
+- **Why the far-order trigger misses the big jumps:** the public book shows 20 ticks from the best price, so an order
+  placed 130 ticks away after a 130-tick jump is invisible. The two biggest jumps of the tape (−140 at 170 s, +130 at
+  1740 s) never fired it. `IdGapJump` sees them through missing order ids plus orders clamped inside the stale touch.
+  Trace of the id-gap sniper: 1394 s bought 505 at 9688, sold 302 at 9795 (+107 ticks/lot, about 32k); 2171 s +73/lot;
+  2541 s +28/lot; 1740 s only 4 lots (the stale asks were gone in 5 ms). The settings sit on a plateau (IDG_DEPTH
+  5/10/15, IDG_S_MIN 10/20/30, hold 0.2–1 s all within 1k); IDG_MISSING 2 fires falsely (penalty 34.6k).
+- **Per quarter** (r4_q1..q4): sniper +30k / +23k / +2k / 0 (never loses, pays when a big jump comes); momentum
+  +1k / −18k / +9k / +39k (net positive, inconsistent).
+- **Closed on round 4:** quiet taker-only (Q_PASSIVE 2) −8%, reduce-only quoting −3%, deeper quotes (EDGE 0.6–1.5,
+  KEEP_LEVELS 2–3, QTY 300) −4 to −10%. The quiet passive leg pays through turnover even though its 30 s markout is
+  about 0. Momentum K_MOM / V_K_MOM 0.2 or a 2 s window lose; 0.1 over 0.5 s is the best of the grid.
+
+### ML take rule: rejected (round 3, 2026-11-08)
+
+`scripts/take_candidates.py` logs every take candidate of a strategy (21 features at decision time, the strategy's
+own decision, and the executable 5 ms markout at 1/5/30 s); `scripts/meta_label_eval.py` compares policies on it
+leave-one-quarter-out. Offline on hmm_deep_clear_ks / round3_public: filtering the strategy's takes (meta-labelling)
++1.5% ridge, −24% HGB; taking any candidate a ridge model rates positive doubled the summed markout (42k vs 22.5k
+ticks·lots), also out of distribution on round 2. In the simulator (`r3_ks_mltake.py`, ridge fitted on q1+q2) it lost
+**16–23% in every quarter, including its training quarters**, and every lower EDGE_TAKE / V_EDGE_TAKE lost too. The
+per-lot markout label ignores that extra takes use up the ±100 room and displace passive fills. Any ML here needs the
+marginal PnL with inventory as its label, which is what backtest sweeps already measure. The HGB storm gate
+(`r3_ks_hgb.py`) lost 15–50% for a related reason: it predicts that a big move is coming, not the millisecond to take.

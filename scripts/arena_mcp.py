@@ -169,7 +169,7 @@ def arena_current_round() -> str:
 @mcp.tool()
 def arena_leaderboard(round_name: str = '', top: int = 20) -> str:
     """Leaderboard of a round with each team's z-score as the final score computes it: PnL standardized against the
-    teams with PnL > 0 (teams at or below 0 count as PnL 0). round_name: 'Round 1', '1', a round id, or empty for the
+    teams with PnL > 0 (mean and sample sd, n-1; teams at or below 0 count as PnL 0). round_name: 'Round 1', '1', a round id, or empty for the
     active round (else the latest published one)."""
     round_id = _round_id(round_name)
     if not round_id:
@@ -194,7 +194,7 @@ def arena_leaderboard(round_name: str = '', top: int = 20) -> str:
     parsed.sort(key=lambda x: -x[1])
     pos = [p for _, p in parsed if p > 0]
     mean = statistics.fmean(pos) if pos else 0.0
-    sd = statistics.pstdev(pos) if len(pos) > 1 else 0.0
+    sd = statistics.stdev(pos) if len(pos) > 1 else 0.0  # sample sd (n-1): matches the official board
     lines = [f'round {round_id}: {len(parsed)} teams, {len(pos)} with PnL > 0, mean {mean:,.0f}, sd {sd:,.0f}', '',
              f'{"#":>3}  {"team":<40}{"PnL":>14}{"z":>8}']
     for i, (team, p) in enumerate(parsed[: max(top, 1)], 1):
@@ -217,6 +217,77 @@ def arena_submission(evaluation_id: str) -> str:
     if not re.fullmatch(r'[A-Za-z0-9_-]+', evaluation_id or ''):
         return 'evaluation_id must be the id shown on the site (letters, digits, - or _)'
     return _dump(_get(f'/evaluations/{evaluation_id}'))
+
+
+DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data')
+STORAGE_HOST = re.compile(r'^https://[a-z0-9.-]+\.r2\.cloudflarestorage\.com/')
+
+
+def _fetch_file(url: str) -> bytes:
+    """GET a download link the API returned (presigned storage URL only)."""
+    if not STORAGE_HOST.match(url or ''):
+        raise ValueError(f'not an arena storage link: {url[:60]}')
+    with urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': 'arena-readonly-mcp'}), timeout=60) as r:
+        return r.read()
+
+
+def _save_evaluation(ev: dict, out_root: str) -> str:
+    """Save one submission: strategy.py plus the unpacked results zip (result.json, pnl.csv, metadata.json)."""
+    import io
+    import zipfile
+
+    d = _get(f'/evaluations/{ev["id"]}')
+    folder = os.path.join(out_root, f'{str(ev.get("createdAt", ""))[11:16].replace(":", "")}_{str(ev["id"])[:8]}')
+    os.makedirs(folder, exist_ok=True)
+    got = []
+    if d.get('strategyFile'):
+        with open(os.path.join(folder, 'strategy.py'), 'wb') as f:
+            f.write(_fetch_file(d['strategyFile']))
+        got.append('strategy.py')
+    if d.get('resultFileZip'):
+        z = zipfile.ZipFile(io.BytesIO(_fetch_file(d['resultFileZip'])))
+        for name in z.namelist():
+            base = os.path.basename(name)
+            if base and not base.startswith('.') and '..' not in name:
+                with open(os.path.join(folder, base), 'wb') as f:
+                    f.write(z.read(name))
+                got.append(base)
+    meta = {k: d.get(k) for k in ('id', 'createdAt', 'type', 'status', 'score', 'isFinal', 'sourceEvaluationId', 'metrics')}
+    meta['createdBy'] = (d.get('createdBy') or {}).get('name')
+    with open(os.path.join(folder, 'evaluation.json'), 'w') as f:
+        json.dump(meta, f, indent=1)
+    who = meta['createdBy'] or '?'
+    return f'{folder}: score {d.get("score")}, {d.get("type")}, by {who}, saved {", ".join(got) or "nothing (still running?)"}'
+
+
+@mcp.tool()
+def arena_download(round_name: str = '', evaluation_id: str = '') -> str:
+    """Download submissions for local analysis: each one's strategy.py, the arena's result.json / pnl.csv /
+    metadata.json from its results zip, and evaluation.json (score, type, author, metrics), into
+    data/validation_<round>/<HHMM>_<id8>/ (the anchor layout scripts/twin_check.py reads). Give evaluation_id for one
+    submission, or round_name ('Round 3', '3', empty for the active round) for all of that round's submissions.
+    Read-only: GETs to the API and to the download links it returns; writes only under data/."""
+    if evaluation_id:
+        if not re.fullmatch(r'[A-Za-z0-9_-]+', evaluation_id):
+            return 'evaluation_id must be the id shown on the site (letters, digits, - or _)'
+        ev = _get(f'/evaluations/{evaluation_id}')
+        rows = [ev]
+        rid = str(ev.get('roundId', ''))
+    else:
+        rid = _round_id(round_name)
+        rows = [r for r in _rows(_get('/evaluations/')) if str(r.get('roundId')) == rid]
+    names = {str(r.get('id')): str(r.get('name', '')) for r in _rows(_get('/rounds/'))}
+    tag = re.sub(r'[^a-z0-9]+', '', names.get(rid, rid[:8]).lower()) or rid[:8]
+    out_root = os.path.join(DATA_DIR, f'validation_{tag}')
+    if not rows:
+        return f'no submissions found for round {names.get(rid, rid)}'
+    lines = []
+    for ev in rows:
+        if str(ev.get('status')) != 'COMPLETED':
+            lines.append(f'{ev.get("id")}: {ev.get("status")}, skipped (not finished)')
+            continue
+        lines.append(_save_evaluation(ev, out_root))
+    return '\n'.join(lines)
 
 
 if __name__ == '__main__':

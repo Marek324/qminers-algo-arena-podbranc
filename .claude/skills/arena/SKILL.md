@@ -19,6 +19,7 @@ manual actions on the site, done by a human (AGENTS.md).
 | `arena_leaderboard(round_name, top)` | standings with each team's z-score; `round_name` is "Round 2", "2", a round id, or empty (the active round, else the latest published one) |
 | `arena_submissions(limit)` | our submissions, newest first: score, metrics, PUBLIC / PRIVATE type, `isFinal` |
 | `arena_submission(id)` | one submission in full |
+| `arena_download(round_name, evaluation_id)` | save submissions locally: `strategy.py` + the arena's `result.json` / `pnl.csv` / `metadata.json` + `evaluation.json`, into `data/validation_<round>/<HHMM>_<id8>/` (the anchor layout `scripts/twin_check.py` reads); one id, or every submission of a round |
 
 ## Setup (once per machine)
 
@@ -58,11 +59,16 @@ direct call above in a shell that has `ARENA_TOKEN` set.
 - **The final ranking** combines the private PnL of all four rounds:
   `Score = 0.8·z₁ + 1.0·z₂ + 1.0·z₃ + 1.2·z₄`. zᵣ is the PnL standardized against the other teams in round r. Teams
   with PnL ≤ 0 (or no final submission) are left out of that round's mean and standard deviation, and score as if their
-  PnL were 0. `arena_leaderboard` computes these z-scores the same way.
-- **What follows for us:** a zero or negative round is catastrophic (round 1: z = −3.16), so reliability beats a few
+  PnL were 0. The sd is the **sample** sd (n−1, `statistics.stdev`), not the population sd: `pstdev` overstates every
+  z by √(n/(n−1)), about 1% (GammaStrike's round-1 z came out 2.60 against the official 2.58). Round to 2 decimals
+  only at the end; the total is computed from unrounded z's. `arena_leaderboard` computes these z-scores the same way.
+- **What follows for us:** a zero or negative round is catastrophic (round 1: z = −3.13; round 2: −1.24), so reliability beats a few
   percent of PnL. Later rounds weigh more. Tuning to the public tape buys nothing, because scoring uses the private one.
 
 ## Round 1 for reference
 
-Our final was `strategies/round1/adaptive_mm_plus.py`: 678,057 public, 667,357 private, 3rd of 61 (z +1.69). Leader
-GammaStrike at 792,696 (z +2.60). Mean of the 60 positive teams 434,481, sd 137,534.
+Our final was `strategies/round1/adaptive_mm_plus.py`: 678,057 public, 667,357 private, 3rd of 61 (z +1.68). Leader
+GammaStrike at 792,696 (z +2.58). Mean of the 60 positive teams 434,481, sample sd 138,697.
+
+Overall after round 2 (official board): we are 6th with z₁ 1.68, z₂ 1.40, total 2.74. Leaders GammaStrike 3.51,
+delfini 3.24, Codehorses 2.91, Olexa namichej 2.90, Southeast Fortress 2.85.

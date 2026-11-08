@@ -194,6 +194,19 @@ class R4mMlStrategy(BaseStrategy):
     K_FAR = 0.0          # depth imbalance of the band FAR_LO..ML_DEPTH ticks behind the best, quiet
     V_K_FAR = 0.0        # same, storm
     FAR_LO = 5
+    # storm-end hazard: storms are regular (mean 84 s, CV 0.44), so lean against the position as the storm ages
+    V_HZ = 0.0           # ticks per lot at full age
+    HZ_US = 90_000_000   # age (since p_vol crossed P_ON) at which the lean is full
+    # storm take size by edge: below ESZ_FULL ticks of edge take only V_QTY * ESZ_FRAC (0: off)
+    ESZ_FULL = 0.0
+    ESZ_FRAC = 0.5
+    # jump-direction prior: the next jump repeats the last one's sign 61% of the time
+    V_K_PJ = 0.0         # storm fair lean (ticks) towards the last jump's direction
+    PJ_US = 120_000_000
+    # pull our quiet quotes on the side a jump runs over, and keep it empty for JC_HOLD_US
+    JUMP_CANCEL = 0      # 1: on id-gap fires (weak and strong)
+    FAR_CANCEL = 0       # >0: also on a single new order this far behind the opposite best
+    JC_HOLD_US = 50_000
     K_MOM = 0.1
     V_K_MOM = 0.1
     MOM_US = 500_000
@@ -332,6 +345,11 @@ class R4mMlStrategy(BaseStrategy):
         self.weak_id = None
         self.ofi = 0.0
         self.mlofi = 0.0
+        self.in_storm = False
+        self.storm_t = 0
+        self.pj_sign = 0
+        self.pj_t = -10**12
+        self.block = {1: 0, -1: 0}
         self.mlofi_t = 0
         self.mlofi_prev = None
         self.ml_on = any((self.K_MLDI, self.V_K_MLDI, self.K_WMP, self.V_K_WMP, self.K_MLOFI, self.V_K_MLOFI, self.K_FAR, self.V_K_FAR))
@@ -416,10 +434,12 @@ class R4mMlStrategy(BaseStrategy):
                 self.idg_t = now
                 if self.IDG_SNIPE:
                     self._snipe_idg(dj, bb, ba, now)
+                self._jump_seen(dj, now)
         if self.idg2 is not None:
             dj = self.idg2.check(now)
             if dj:
                 self._weak(dj, bb, ba, now)
+                self._jump_seen(dj, now)
         half = (bq + aq) / 2
         self.depth = half if self.depth == 0 else self.depth + self.DEPTH_EMA * (half - self.depth)
         x = self.flow / self.depth
@@ -438,6 +458,10 @@ class R4mMlStrategy(BaseStrategy):
         ml_q = self.K_MLDI * mldi + self.K_WMP * wmp + self.K_MLOFI * mlofi + self.K_FAR * far
         ml_v = self.V_K_MLDI * mldi * ((ba - bb) * 0.5 if self.ML_SPREAD else 1.0) + self.V_K_WMP * wmp + self.V_K_MLOFI * mlofi + self.V_K_FAR * far
 
+        storm = self.pv >= self.P_ON
+        if storm and not self.in_storm:
+            self.storm_t = now
+        self.in_storm = storm
         if self.pv < self.P_ON:
             fair = mid + self.K_S * (self.s - mid) + self.K_IMB * imb + self.K_FLOW * fx - self.K_INV * self.inv + self.K_MOM * mom + self.K_OFI * ofi + self.K_DIMB * dimb + ml_q
             if fair - ba >= self.EDGE_TAKE:
@@ -457,23 +481,33 @@ class R4mMlStrategy(BaseStrategy):
                 while pa - fair < self.EDGE:
                     pa += 1
             qp = self.Q_PASSIVE
-            if qp == 0 or pb >= ba or (qp == 1 and self.inv < 0):
+            if now < self.block[1] and pb < ba:
+                self._clear(1)
+            elif qp == 0 or pb >= ba or (qp == 1 and self.inv < 0):
                 self._side(1, pb)
             else:
                 self._clear(1)
-            if qp == 0 or pa <= bb or (qp == 1 and self.inv > 0):
+            if now < self.block[-1] and pa > bb:
+                self._clear(-1)
+            elif qp == 0 or pa <= bb or (qp == 1 and self.inv > 0):
                 self._side(-1, pa)
             else:
                 self._clear(-1)
             return
 
         fair = mid + self.V_K_S * (self.s - mid) + self.V_K_FLOW * fx - self.V_K_INV * self.inv + self.V_K_MOM * mom + self.V_K_OFI * ofi + self.V_K_DIMB * dimb + ml_v
+        if self.V_HZ:
+            fair -= self.V_HZ * min(1.0, (now - self.storm_t) / self.HZ_US) * self.inv
+        if self.V_K_PJ and now - self.pj_t < self.PJ_US:
+            fair += self.V_K_PJ * self.pj_sign
         if fair - ba >= self.V_EDGE_TAKE:
-            self._side(1, math.floor(fair - self.V_EDGE_TAKE) if self.V_SWEEP else ba, self.V_QTY)
+            q = self.V_QTY if (not self.ESZ_FULL or fair - ba >= self.ESZ_FULL) else int(self.V_QTY * self.ESZ_FRAC)
+            self._side(1, math.floor(fair - self.V_EDGE_TAKE) if self.V_SWEEP else ba, q)
         else:
             self._clear(1)
         if bb - fair >= self.V_EDGE_TAKE:
-            self._side(-1, math.ceil(fair + self.V_EDGE_TAKE) if self.V_SWEEP else bb, self.V_QTY)
+            q = self.V_QTY if (not self.ESZ_FULL or bb - fair >= self.ESZ_FULL) else int(self.V_QTY * self.ESZ_FRAC)
+            self._side(-1, math.ceil(fair + self.V_EDGE_TAKE) if self.V_SWEEP else bb, q)
         else:
             self._clear(-1)
 
@@ -523,6 +557,8 @@ class R4mMlStrategy(BaseStrategy):
                 self.jv = 0
             if self.jv >= self.JUMP_N or -self.jv >= self.JUMP_N:
                 self.P += self.JUMP_P
+                self.pj_sign = 1 if self.jv > 0 else -1
+                self.pj_t = now
                 self.jv = 0
         k = self.P / (self.P + r)
         self.s += k * (y - self.s)
@@ -569,6 +605,10 @@ class R4mMlStrategy(BaseStrategy):
                     self.idg2.seen(oid, now)
                     if self.pbb:
                         self.idg2.new_order(sign, o.price, self.pbb, self.pba, now)
+                if self.FAR_CANCEL and self.ba:
+                    behind = (self.ba - 1 - o.price) if sign < 0 else (o.price - self.bb - 1)
+                    if behind >= self.FAR_CANCEL:
+                        self._pull(sign, now)
                 if self.WEAK_FAR and self.ba:
                     behind = (self.ba - 1 - o.price) if sign < 0 else (o.price - self.bb - 1)
                     if behind >= self.WEAK_FAR:
@@ -709,6 +749,19 @@ class R4mMlStrategy(BaseStrategy):
             if o.owner == 'market':
                 a += o.quantity
         return (b - a) / (b + a) if b + a else 0.0
+
+    def _jump_seen(self, d: int, now: int) -> None:
+        self.pj_sign = d
+        self.pj_t = now
+        if self.JUMP_CANCEL:
+            self._pull(d, now)
+
+    def _pull(self, d: int, now: int) -> None:
+        """S moved in direction d: our quotes on the other side are about to be run over."""
+        self.block[-d] = now + self.JC_HOLD_US
+        for oid, o in self.orders.items():
+            if o[0] == -d and oid not in self.cancel_sent:
+                self._cancel(oid)
 
     def _weak(self, d: int, bb: int, ba: int, now: int) -> None:
         """Weak jump sign in direction d: take toward +-WEAK_POS inside the cap at once."""

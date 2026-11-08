@@ -1231,3 +1231,64 @@ QminersOrg/qminers-algo-arena. What carries over:
   the generator's new orders at S ± X, which the Kalman filter already reads.
 - **Ready Trader Go** write-ups: mid / imbalance market makers with spread from recent volatility; nothing beyond
   imbalance_mm.
+
+### Round 4: new-architecture pass (position age, weak jump tier, order-book layer; 2026-11-08)
+
+Base `r4m_risk_a` 1,156,545 (quarters 317,269 / 290,067 / 297,272 / 250,387). Sweeps on .225 (quarters) and .171
+(full tape); grids in `scripts/grid_{hold,ioc,tier,book,book2}.txt`.
+
+**Where the storm money sits** (`scripts/markout_curve.py` on the r4m_risk_a full-logs run). Storm takes mark out
++1.8 / +3.2 / +3.8 ticks/lot at 1 / 5 / 30 s; storm passive fills that close a position −1.0 / −2.6 at 5 / 30 s
+(34k lots). At the cap in storm (31% of seconds) the held ±100 carries +3.2 ticks/lot over the next 1 s and +7.0 over
+5 s, and about 0 by 30 s **for a fixed position**. But by position age (time since the last fill that grew |inv|) the
+next-5 s carry per lot *rises*: 4.1 (< 1 s), 7.1 (1–2 s), 8.9 (3–5 s), 11.8 (5–8 s), 14–15 (8–20 s). Positions that
+survive sit on persistent trends; the 30 s reversal comes after our flips, not while we hold. So an exit clock
+(architecture 3's "post-move" specialist) has nothing to take, and it was not built.
+
+**Age-based specialists** (`strategies/round4/r4m_hold.py`): rejected.
+
+| variant | q1 | q2 | q3 | q4 | full |
+|---|---|---|---|---|---|
+| storm flip hysteresis after 3 s, +0.25 / 0.5 / 1 / 2 ticks | 316k / 315k / 305k / 297k | 290k / 291k / 287k / 272k | 297k / 294k / 291k / 270k | 249k each, 243k | 1,155k / 1,151k / 1,134k / 1,084k |
+| hysteresis 0.5 after 2 s / 5 s / ramped | 321k / 316k / 306k | 292k / 291k / 283k | 294k / 297k / 291k | 248k / 251k / 249k | 1,156k / 1,156k / 1,131k |
+| quiet age skew (0.005–0.02 per lot after 5–10 s) | = | −0.3k | = | = | = (quiet positions never age) |
+| storm takes as IOC (no resting leftovers), ± hysteresis / sweep | 311k / 310k / 311k | 291k | 298k / 295k / 298k | 251k / 250k | — |
+
+Flips must stay fast: the fair value already prices trend persistence.
+
+**Weak jump tier inside the cap** (`strategies/round4/r4m_tier.py`). A second `IdGapJump` with 2 missing ids (8 of
+15 big jumps, against 4 for the 3-id rule, but 5 of 23 fires false) moves the position to ±100 with one IOC, never
+past the cap, so a false fire costs the spread and no penalty. The strong 3-id rule still levers to 1000.
+
+| variant | q1 | q2 | q3 | q4 | full |
+|---|---|---|---|---|---|
+| 2 missing ids (sweep depth 5; 2 / 10 / storm-only identical) | **+2.4k** | **+1.8k** | **+0.8k** | 0 | **1,161,578 (+5k)**, same penalty |
+| same, to ±50 | +2.1k | +0.7k | +0.8k | 0 | 1,160,185 |
+| single far order 10 / 15 / 20 ticks | −47k / −16k / −18k | −12k / −5k / −5k | −30k / −2k / +1k | −43k / −2k / +1k | — |
+| 2 ids + far 15 | +4.6k | −3.3k | −0.9k | −1.6k | — |
+
+The 2-id tier passes the rule (3 of 4 up, q4 equal, neighbours identical) but is +0.4%, noise level for a submission.
+Far-order tiers lose: false fires in storm cost a 200-lot round trip and the quiet quotes trade the position back.
+
+**Order-book layer** (`r4m_tier.py`, on top of the weak tier, base 1,161,578). The strategy reads new-order prices,
+id gaps, taker flow and touch imbalance, but never cancels or depth beyond the touch. Tested: order-flow imbalance at
+the touch (Cont et al., decayed over OFI_TAU, per mean touch depth) and depth imbalance within DIMB_LEVELS ticks, as
+fair terms.
+
+- **OFI: rejected at both signs.** +0.25 / 0.5 / 1 → 1,029k / 900k / 719k; quiet-only 0.5 935k; storm-only 0.5 1,124k;
+  −0.1 / −0.25 quiet 1,084k / 929k. It adds noise to fair and triggers bad takes.
+- **Depth imbalance in quiet: rejected** (+0.5 1,129k, −0.2 / −0.5 1,149k / 1,148k on quarters).
+- **Depth imbalance in storm: promising shape, fails acceptance.** Quarters vs base: V_K_DIMB 0.5 +26k / +4k / −8k /
+  −2.5k; 0.75 +26k / +22.5k / −3k / −5k; 0.5 over 3 levels +22.6k / +20.7k / −2k / −3.9k; 0.25 +4.5k / +1.4k / −5.6k /
+  −1.4k. Full tape 0.5: 1,183,307 (`strategies/round4/r4m_book.py`). Paired robustness against r4m_risk_a (same 6 chunks,
+  same 8 bootstrap sessions): chunks +6.5k / +22.5k / +4.5k / −5.1k / −2.1k / −2.7k, bootstrap up in 3 of 8 (mean
+  +1.8k). The gain sits in the first half of the tape (heavier storms, 1 s storm vol 14 and 11.5 vs 8.6 and 10.8), so
+  the expected gain on the hidden tape is about zero. Mechanism if it ever holds: in storm new orders land at S ± X
+  and IOCs eat the stale side, so near-touch depth leans towards S, a second read on S − mid.
+
+**Not built:** an ensemble of the Kalman and IMM hidden-price estimates. Both read the same new orders with the same
+gap model and depth gate, so their errors are nearly the same. Also checked: the breach penalty is integrated
+continuously (`simulator.py` `_accrue_breach_penalty`), so there are no free sub-second excursions.
+
+**Verdict:** no new architecture beats r4m_risk_a beyond noise. r4m_risk_a stays the submission; `r4m_tier`
+(+5k) and `r4m_book` (+27k, first-half only) are not worth a submission.

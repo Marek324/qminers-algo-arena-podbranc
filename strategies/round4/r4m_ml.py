@@ -183,6 +183,7 @@ class R4mMlStrategy(BaseStrategy):
     K_MLDI = 0.0         # distance-weighted depth imbalance, weights exp(-d / ML_LAM), quiet
     V_K_MLDI = 0.0       # same, storm
     ML_LAM = 3.0
+    ML_SPREAD = 0        # 1: the storm MLDI term is scaled by the half spread (microprice form: mid + k * imb * spread / 2)
     K_WMP = 0.0          # multi-level microprice minus mid (ticks per tick), quiet
     V_K_WMP = 0.0        # same, storm
     WMP_LEVELS = 5
@@ -435,7 +436,7 @@ class R4mMlStrategy(BaseStrategy):
         if self.ml_on:
             mldi, wmp, mlofi, far = self._ml(bids, asks, bb, ba, mid, now)
         ml_q = self.K_MLDI * mldi + self.K_WMP * wmp + self.K_MLOFI * mlofi + self.K_FAR * far
-        ml_v = self.V_K_MLDI * mldi + self.V_K_WMP * wmp + self.V_K_MLOFI * mlofi + self.V_K_FAR * far
+        ml_v = self.V_K_MLDI * mldi * ((ba - bb) * 0.5 if self.ML_SPREAD else 1.0) + self.V_K_WMP * wmp + self.V_K_MLOFI * mlofi + self.V_K_FAR * far
 
         if self.pv < self.P_ON:
             fair = mid + self.K_S * (self.s - mid) + self.K_IMB * imb + self.K_FLOW * fx - self.K_INV * self.inv + self.K_MOM * mom + self.K_OFI * ofi + self.K_DIMB * dimb + ml_q

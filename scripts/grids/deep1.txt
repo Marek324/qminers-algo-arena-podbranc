@@ -1,0 +1,3 @@
+deep617: 
+deep617_nm6: SIG_Q=0.6, H_NMAX=6
+deep617_nm6_p05: SIG_Q=0.6, H_NMAX=6, P_ON=0.5

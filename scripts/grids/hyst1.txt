@@ -1,0 +1,8 @@
+base: P_OFF=0.5, HOLD_US=0
+off03: P_OFF=0.3
+off015: P_OFF=0.15
+hold1: HOLD_US=1_000_000
+hold3: HOLD_US=3_000_000
+hold5: HOLD_US=5_000_000
+off03_hold2: P_OFF=0.3, HOLD_US=2_000_000
+off015_hold3: P_OFF=0.15, HOLD_US=3_000_000

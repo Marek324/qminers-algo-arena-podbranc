@@ -1168,3 +1168,16 @@ L = 10 gives the same picture. The model's weight goes to p_vol and the spread: 
 storms, not when, so it fires during storms after the move has started and loses the spread. The weak signals carry
 no timing information beyond the id-gap rule. Also note that the rule fired only in the first half of the tape, which
 matches the sniper's per-quarter gain (+30k / +23k / +2k / 0).
+
+### Round 4: passive-leg ideas from research_notes (rejected, 2026-11-08)
+
+`strategies/round4/r4m_pass.py` (switches on `r4m_risk_a`, 1,156,545):
+
+- **Queue-aware quoting** (`QMAX`: no new inventory-increasing passive order at the touch behind more than 300 / 600 /
+  1000 / 2000 market lots; research_notes queue-position §1, §4): 1,153k–1,156k, every quarter within −1.4k. The
+  touch is usually short enough that the rule rarely binds.
+- **Convex inventory skew** (`INV_P` 1 / 2 / 4, GLFT boundary taper): 1,085k–1,097k, all 4 quarters down 7–26k; with
+  K_INV 0.003 1,032k. Holding the position near ±100 is where the money is; pushing it back toward flat costs.
+- **Adverse-selection-adapted edge** (`AS_K` 0.5 / 1 / 2, EWMA of the move 100 ms after our passive fills): identical
+  to the base. Our passive fills are not adverse at 100 ms on average (the EWMA stays below zero), so the widening
+  never switches on; the passive loss shows up at 30 s, not 100 ms.

@@ -33,7 +33,7 @@ from analysis.generator import PARAM_DIR, GenParams, generate, write_tape  # noq
 from estimate_model import with_gamma_x  # noqa: E402
 from path_twin import mid_from_probes, regimes_from_path  # noqa: E402
 
-OUT = ROOT / 'logs' / 'twin_cal2'
+OUT = ROOT / 'logs' / 'twin_cal3'
 
 
 def anchors(d: Path) -> list[Path]:
@@ -98,9 +98,9 @@ def main() -> None:
     print(f'{len(anchs)} anchors; path {t[-1]:.0f} s from {long_dir.name} / {short_dir.name}', flush=True)
 
     grid = {
-        'ioc_couple': (0.0, 0.15, 0.3),
-        'ioc_rate': (1.0, 1.3),
-        'x_mean': (0.8, 1.0),
+        'impact_k': (0.2, 0.33),
+        'sigma_storm': (0.5, 0.6, 0.8),
+        'ioc_rate': (1.35, 1.6),
     }
     combos = [dict(zip(grid, v, strict=True)) for v in itertools.product(*grid.values())]
     OUT.mkdir(parents=True, exist_ok=True)
@@ -114,9 +114,13 @@ def main() -> None:
         i, c = i_c
         tape = OUT / f'twin_{i}.csv'
         if not tape.exists():
-            p = replace(base, ioc_rate=base.ioc_rate * c['ioc_rate'], ioc_couple=c['ioc_couple'],
-                        ioc_rate_storm=(base.ioc_rate_storm or base.ioc_rate) * c['ioc_rate'], impact_k=base.impact_k * 0.6)
-            p = with_gamma_x(p, base.x_mean * c['x_mean'], base.x_std)  # X is drawn from the gamma shape, not x_mean
+            # round 3: multipliers on the round3_public fit, around Jakub's best public-tape correction
+            # (docs/EVALUATION_DATASET_ANALYSIS.md: impact x0.33, IOC x1.35, storm sigma x0.6, post-jump burst x0.5)
+            p = replace(base, ioc_rate=base.ioc_rate * c['ioc_rate'],
+                        ioc_rate_storm=(base.ioc_rate_storm or base.ioc_rate) * c['ioc_rate'],
+                        impact_k=base.impact_k * c['impact_k'], sigma_storm=base.sigma_storm * c['sigma_storm'],
+                        ioc_boost=base.ioc_boost * 0.5)
+            p = with_gamma_x(p, base.x_mean, base.x_std)
             df, _, _ = generate(p, seed=a.seed, duration_s=float(t[-1]), s_path=(t, s), jump_ticks=20.0, regimes=reg)
             write_tape(df, tape)
         return tape

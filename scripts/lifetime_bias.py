@@ -53,7 +53,7 @@ b = bidc.reindex(idx, fill_value=0).to_numpy(float)
 a = askc.reindex(idx, fill_value=0).to_numpy(float)
 imb = (b - a) / np.maximum(b + a, 1)
 for h in (1, 5, 30):
-    fut = np.r_[m[h:] - m[:-h], np.full(h, np.nan)]
+    fut = np.r_[m[h + 1:] - m[1:-h], np.full(h + 1, np.nan)]   # move from the end of the counting second on
     k = np.isfinite(fut)
     r = np.corrcoef(imb[k], fut[k])[0, 1]
     print(f'corr(bid-ask cancelled-lot imbalance this second, mid move next {h:2d} s) = {r:+.3f} (n {k.sum()}, se {1 / np.sqrt(k.sum()):.3f})')

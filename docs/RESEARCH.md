@@ -1292,3 +1292,37 @@ continuously (`simulator.py` `_accrue_breach_penalty`), so there are no free sub
 
 **Verdict:** no new architecture beats r4m_risk_a beyond noise. r4m_risk_a stays the submission; `r4m_tier`
 (+5k) and `r4m_book` (+27k, first-half only) are not worth a submission.
+
+### Round 4: multi-level book features and the remaining untried ideas (2026-11-08)
+
+`strategies/round4/r4m_ml.py` = `r4m_tier` (weak 2-id jump tier, base quarters 319,712 / 291,819 / 298,110 / 250,387,
+full 1,161,578) plus switches; grids `scripts/grid_ml.txt`, `grid_ml2.txt`, `grid_all.txt`.
+
+**Multi-level book features** (market orders only, per tick distance from each side's best, up to 20 ticks):
+
+| feature | best setting: quarters vs base | full | verdict |
+|---|---|---|---|
+| distance-weighted depth imbalance exp(−d/λ), storm, 0.5, λ 3 | +21.5k / +22.6k / −4.4k / −4.6k | **1,197,048** | same first-half split as DIMB; λ 1 / 8, K 1 give 1,176–1,186k |
+| same, scaled by the half spread (microprice form), 0.25–1 | +4k / +1k / −3k / −1k at best | — | worse than unscaled |
+| same, quiet ±0.2 | −1k to −6k all quarters | 1,137k / 1,147k | rejected |
+| multi-level microprice (VWAP of 3/5/10 levels), storm / quiet ± | down in all quarters (3 levels: +13.7k / +9k / −9k / −5k) | 1,119k | rejected |
+| multi-level OFI (decayed Δ depth within 5 ticks), ± | −4% to −15% | — | rejected |
+| far-band imbalance (5–20 or 10–20 ticks), ± | ±10k mixed | — | rejected |
+
+The storm depth imbalance (DIMB or its distance-weighted form) is the one order-book signal with a consistent sign at
+neighbouring settings, but it pays only in q1 / q2 (paired robustness chunks also first-half only). Kept off.
+
+**Remaining untried ideas** (all on the same base):
+
+- **Storm-end hazard** (storms last 84 s with CV 0.44, so lean against the position as the storm ages, V_HZ ticks per
+  lot at HZ_US): 0.01 over 60 / 90 / 150 s → 1,036k / 1,093k / 1,134k; 0.02 / 90 s 854k. Down in every quarter.
+- **Edge-sized storm takes** (half or quarter size below 1 / 1.5 ticks of edge): 1,155k–1,157k, noise.
+- **Jump-direction prior** (storm lean toward the last jump's sign, 61% repeat): 0.3 / 0.6 / 0.3 for 30 s →
+  1,129k / 1,090k / 1,134k, down in all quarters.
+- **Pull quiet quotes on jump signals** (id-gap fires, single far orders 10 / 15 / 20 ticks, hold 50 / 200 ms):
+  identical to the base. Far orders come in storms, when there are no quiet quotes to pull.
+- **Bias to the tape's long-term trend:** not built. round4_public drifts 10,001 → 9,554 (−446 ticks over 6,000 s);
+  the hidden validation tape ends at mark 10,349 (about +350 over 12,000 s). Each session drifts its own way, and at the
+  ±100 cap a bias can only shift which way the cap is held: 20 extra lots over a 400-tick drift is about 8k.
+- Not built: DP-policy distillation and per-inventory DP take thresholds (in-sample ML, the failure mode of the ML
+  take rule); endgame handling (the strategy does not know the tape length; the end position is marked at the mid).

@@ -34,13 +34,12 @@ Current tools:
 
 - `tools/volatility.py`: `RealizedVol` (online volatility in ticks/√s from ~1 s samples, fast warm-up).
 - `tools/markout.py`: `FillMarkout` (running per-lot markout of our own fills a fixed time later).
-- `tools/grid_price.py`: `HiddenPriceGrid` (Bayesian grid filter over the hidden price S and the quiet/volatile regime, exact floor/ceil order-placement likelihoods; lost to the Kalman on round 2).
-- `tools/clamped_ema.py`: `ClampedPriceEMA` (fast S estimate from new orders; orders at the no-cross cap count as one-sided bounds, which catches jumps).
-- `tools/regime_score.py`: `RegimeScore` (quiet / volatile switch from how far new orders land from the mid; reacts in ~0.2 s).
 - `tools/kalman_price.py`: `HiddenPriceKalman` (1-D Kalman filter for the hidden price S from new limit-order prices, with jump inflation after big IOCs, online offset and noise, censored capped orders).
 - `tools/regime_filter.py`: `RegimeFilter` (online 2-state calm/storm HMM forward filter on per-second counts of far-placed new orders, taker events, wide spread and optionally limit inserts; returns P(storm)).
 - `tools/rls.py`: `RLS` (recursive least squares with forgetting; online fair-value prediction, used by `alpha_as_mm`).
 - `tools/id_gap_jump.py`: `IdGapJump` (jump detector from missing market order ids plus orders clamped inside the stale touch; fires 5-25 ms into a jump).
+- `tools/flow_reversion.py`: `FlowReversion` (online regression of the next ~5 s mid move on slow signed taker flow; uses the slope only when it shows mean reversion).
+- `tools/take_gate.py`: `TakeGate` (taker edge threshold raised by filter inconsistency, i.e. the EWMA of innovation z², and by reversing a recent take; optional edge-sized take caps).
 
 ## No tests
 

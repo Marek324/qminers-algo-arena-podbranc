@@ -758,7 +758,7 @@ the lookahead window (the next IOC sweep, new orders) that no estimate of S(t) c
 
 ## Estimating S on round 2: what was tried and what is left (2026-11-07)
 
-**Grid filter** (`tools/grid_price.py`, `strategies/round2/regime_mm_grid.py`): exact Bayesian filter over (regime, S) with
+**Grid filter** (`strategies/round2/regime_mm_grid.py`; the `tools/grid_price.py` copy was deleted on 2026-11-08): exact Bayesian filter over (regime, S) with
 order offsets fitted per regime from IOC prices (quiet X gamma(0.854, loc 0.025, θ 0.655), mean 0.59; volatile
 gamma(0.384, loc 2.594, θ 2.903) from a two-part mixture, since 62% of the orders regime_mm labels volatile look quiet).
 It lost: 262k with the grid in both regimes, 324k in the volatile regime only, against 470k for regime_mm_kf. Its
@@ -980,3 +980,51 @@ Engineering/evaluation work is complementary rather than direct alpha: use match
 Do **not** spend the next iteration on invisible/exact IOC reconstruction, ID-gap jump detection, another full grid/particle filter, forced exits/current-edge sizing/overshoot, passive signal-side entries, penny-jumping/deep calm sweeps/reactive sweep guards, blanket censoring/static queue thresholds/recent-flow filters/OLS fair values/mean IOC push, fixed execution schedules, full HJB/deep nets/RL, or contest-specific exploits. These either have direct negative local evidence, require unavailable information, or attack the wrong permanent-impact mechanism.
 
 Run **diagnostic → single-change backtest → matched multi-seed validation** in this order: baseline/carry/race accounting; shadow 5 ms calibration then B1/B2/B3; mixture diagnostics then A1/A2/A3; continuous-vol D1; pre-sweep diagnostic; passive-unwind survival; isolated `RegimeFilter`; blocked-value diagnostic then marginal inventory; only then DP/queue and gated Hawkes/ACD. Use the public tape as confirmation, not a repeated tuning set. Its roughly 23k–26k SE and dependence on a few jumps make small gains and even the 13k v2 advantage inconclusive; pre-register one mechanism and stop on failed diagnostics rather than searching thresholds until one wins.
+
+## Round 3: alpha -> target position -> execution: rejected (built as `strategies/round3/alpha_target.py`, since deleted, 2026-11-08)
+
+**Why a new architecture.** Everything that scores on round 3 is a "fair ± edge" market maker with an inventory skew,
+and all of them sit at |inventory| = 100 half the time. PnL scales with the cap (ladder_mm at 50 lots: 362k, hmm_mm at
+100: 568k), and freeing capacity early loses (V_RECYCLE, K_INV sweeps). So the score is the carry of a ±100 position:
+what matters is which way it points and how cheaply it flips. That is how the top IMC Prosperity / Optiver Ready Trader
+teams treated their directional products: forecast → target position → cost-aware execution. Outside search turned up
+no "leverage" trick beyond what the position limit allows (Prosperity teams hard-capped, and one found a bigger cap
+scored worse); our flat 10k/s penalty overshoot was already ruled out on round 3 (see `round3_strategy.py`).
+
+**What it does.** Online RLS (the `tools/online_rls.py` copy was deleted with it; forgetting about 17 min, clipped residuals) learns the 1 s mid
+move from [S_hat − mid, size^0.7-weighted IOC flow, touch imbalance, mid − 60 s EMA, 1 s momentum], starting from the
+prior "mid closes 90% of its gap to S_hat". Target = ±100 once |forecast| > FLIP, otherwise hold. Take every level
+priced TAKE_EDGE through the expected mid; rest at the touch only towards the target.
+
+**Data behind the features (round3_public analysis).** Passive fills from IOCs under 22 lots lose 0.2 ticks/lot by
+1 s; from 45+ lots, 1.0. Big IOCs move S for good, so the impact-weighted flow is its own feature. bb_pctb / zscore
+over 60 s have Spearman −0.15 with the 5 s move (mean reversion), and 1 s returns autocorrelate +0.11 (mid lag).
+
+**Result on round3_public: 390,011** (hmm_mm 569,499), penalty 0, 7,949 fills, 607k lots, PnL steady in every
+1,000 s slice (43k–87k). Rejected as it stands. Fill split (logs/r3-sample, markout against the 1 s mid):
+
+| | lots | 1 s | 5 s | 30 s | PnL at 30 s |
+|---|---|---|---|---|---|
+| takes | 494k | +0.67 | +0.89 | +0.71 | +352k |
+| passive (towards the target only) | 113k | +0.30 | −0.10 | −0.41 | −46k |
+
+The takes earn what hmm_mm's do (538k lots at +0.93 by 5 s), so the online-learned forecast found no edge beyond
+the S_hat gap: the take signal looks saturated. The 180k gap is the passive leg. hmm_mm trades 1.06M lots, about
+550k of them passive (two-sided quiet-regime quotes: 95k opening at +0.94 by 30 s, 455k closing at about zero).
+Resting only on the side towards the target gets filled exactly when the price runs against it.
+
+**Next ideas if this shape works (untried):** policy distillation from the hindsight DP (`scripts/make_dp_oracle.py`):
+fit a small hard-coded classifier from these features to the oracle's position sign; a second horizon (5 s) in the
+RLS so the target uses the longer carry; per-inventory take thresholds from a DP over the opportunity flow.
+
+## Round 3: fading the overshoot: rejected (built as `strategies/round3/fade_hmm.py`, since deleted, 2026-11-08)
+
+Found in the 1 s mid series of `logs/analysis/round3_public.json` and `r3_eval_twin.json`. After a 1 s move of 3–20
+ticks the mid keeps going for about 2 s, then gives back 1–7 ticks over 10–30 s (same sign in every size bucket on
+both tapes, t up to −3.7 with overlapping windows). The strategy was `round3_strategy.py` plus a fair-price shift of
+1.5 ticks against such a move, from 2 s to 22 s after it.
+
+**Result on round3_public: 169,250** (the same strategy without the shift: 569,499), penalty 0, 4,771 fills. The
+reversal is real on average, but it is a few ticks spread over 20–30 s, while the shift spends the whole ±100
+position on it. That position no longer rides the lag takes worth +0.9 ticks/lot by 5 s, and each flip pays the
+spread. A slow mean-reversion signal cannot compete with the fast lag edge for the same capacity.

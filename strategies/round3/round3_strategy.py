@@ -31,6 +31,35 @@ Round 3 history (hmm_mm 568,382): best-price unwind, 1 s limit: 442,686, penalty
 (no round 3 jump passes the gate; the +1.1k comes from the jump takes that fit inside MAX_POS).
 LEV_FAR = 0 turns leverage off (plain hmm_mm).
 
+Why leverage cannot beat the penalty on round 3 (fill decomposition of the logs/r3/round3_full run):
+- Break-even: 900 lots past the limit cost 10,000/s, so they must earn about 11 ticks/lot/s.
+- The 24 overshoot entries of round3_full earned about +2.6 ticks/lot by 0.5 s and +10 by 2 s against the price
+  then. That is about 5 ticks/lot/s, half the break-even, before any exit cost.
+- Big jumps (40-121 ticks, about 10 on the tape) leave no stale volume to take. The price gaps: at t = 4129.83 a tape
+  IOC (402 lots @ 10064) swept the whole stale ask side (9945-9949) in the first event, the asks stayed empty for
+  50 ms, and the book reopened at 10065/10071. The other big jumps look the same.
+- The gate above is only an option on a tape with thick stale books. Round 3 never passes it.
+Where the PnL comes from instead (round3_full): takes 538k lots at +0.93 ticks/lot by 5 s; maker fills that open a
+position 95k lots at +0.94 by 30 s; maker fills that close it 455k lots at +0.09 by 5 s, roughly free capacity
+recycling. PnL is about taker edge times capacity turnover. Taker fills 3+ ticks worse than the last trade lose
+(12k lots, -20k by 5 s), but 9.4k of those lots are the old overshoot entries and forced unwinds (-41k), which the
+gate removes. The regular takes priced 3+ ticks through the last trade make money: 2k lots at +21k by 5 s.
+Grouped by limit price at send, the takes 3-4 ticks through the last trade made +26k. Capping takes at the last trade
+would cost PnL.
+
+Capacity recycling (V_RECYCLE / Q_RECYCLE, ported from hmm_mm_plus, off): round 3 against 569,499:
+V_RECYCLE 0 / 0.5 / 1: 501,338 / 273,711 / -23,471; Q_RECYCLE 0 / 0.5: 508,464 / 438,192. It frees capacity
+(median |inventory| 100 -> 50-96) but every close pays the spread and gives up the move still to come, so the full
+position is where the money is, not a missed opportunity. The runs also show breach penalties (1k-39k).
+
+Exit speed in the quiet regime (round 3, against 569,499): holding longer with Q_HOLD_EDGE 0.5 / 1 / 2 gives
+542,082 / 498,114 / 493,767; K_INV 0 / -0.005: 549,982 / 452,072. Exiting faster with K_INV 0.004 / 0.008 gives
+484,450 / -157,160. K_INV 0.002 is a sharp optimum: both directions lose.
+
+Rate evidence for the regime HMM (round 3, against 569,499): H_IOC (IOC gaps) 567,428; H_LIM (limit-order gaps, off)
+with H_LIM_W 1 / 0.3: 540,966 / 569,504; both on: 537,700. The order-distance evidence already identifies the regime;
+the rates add nothing.
+
 Base (hmm_mm), docstring below.
 
 Two-regime market maker: an online HMM picks the regime, a Kalman filter tracks the hidden price.
@@ -111,6 +140,11 @@ class Round3Strategy(BaseStrategy):
     H_IOC_RQ0 = 8.0      # start IOC rate (per s) in the quiet state
     H_IOC_RV0 = 13.0     # and in the volatile state
     H_IOC_LR = 0.003
+    H_LIM = False         # also feed the gaps between new market limit orders to the HMM (rate learned per state)
+    H_LIM_RQ0 = 185.0     # start limit-order rate (per s) in the quiet state (round 3: ~196/s overall, +-7% with vol)
+    H_LIM_RV0 = 210.0     # and in the volatile state
+    H_LIM_LR = 0.0003
+    H_LIM_W = 1.0         # weight (likelihood exponent) of each gap; < 1 tempers it against the distance evidence
     # Kalman filter for S
     SIG_Q = 0.5          # ticks / sqrt(s) in the quiet state
     SIG_V = 10.0          # in the volatile state
@@ -142,6 +176,15 @@ class Round3Strategy(BaseStrategy):
     UNWIND_SLIP = 2         # unwind IOC priced this many ticks through the opposite best
     JUMP_RESET = False      # on a trigger, also move S_hat to the new S and widen its variance
     JUMP_P = 4.0
+    # capacity recycling (from strategies/round2/hmm_mm_plus.py): close the position by IOC at the touch once the
+    # book has caught up with fair and the adding side has no edge left, so the next stale sweep has room
+    V_RECYCLE = -1.0        # volatile: close once the touch is within this of fair (< 0: off)
+    Q_RECYCLE = -1.0        # quiet: same, only when |inventory| >= Q_RECYCLE_INV (< 0: off)
+    Q_RECYCLE_INV = 100
+    # hold: quiet quotes on the side that reduces |inventory| keep EDGE + Q_HOLD_EDGE * |inventory| / MAX_POS from
+    # fair, so a position is not handed back at the first small move (round 3: passive fills lose -0.91 ticks/lot at
+    # 1 s but only -0.03 at 60 s). 0: off
+    Q_HOLD_EDGE = 0.0
 
     def __init__(self) -> None:
         super().__init__()
@@ -159,6 +202,9 @@ class Round3Strategy(BaseStrategy):
         self.iq = self.H_IOC_RQ0
         self.iv = self.H_IOC_RV0
         self.ioc_t = 0
+        self.lq = self.H_LIM_RQ0
+        self.lv = self.H_LIM_RV0
+        self.lim_t = 0
         self.last_taker = ''
         # Kalman
         self.s = 0.0
@@ -188,6 +234,7 @@ class Round3Strategy(BaseStrategy):
         self.lev_s = 0.0          # new S of the last leverage trade
         self.unw_id = None        # unwind IOC in flight
         self.over_since = 0
+        self.rec_id = None        # recycle IOC in flight
 
     def _cancel(self, oid: str) -> None:
         if oid not in self.cancel_sent:
@@ -252,13 +299,16 @@ class Round3Strategy(BaseStrategy):
 
         if self.pv < self.P_ON:
             fair = mid + self.K_S * (self.s - mid) + self.K_IMB * imb + self.K_FLOW * fx - self.K_INV * self.inv
+            if self.Q_RECYCLE >= 0 and abs(self.inv) >= self.Q_RECYCLE_INV:
+                self._recycle(fair, bb, ba, self.Q_RECYCLE, self.EDGE_TAKE)
             if fair - ba >= self.EDGE_TAKE:
                 pb = math.floor(fair - self.EDGE_TAKE) if self.Q_SWEEP else ba
             elif ba - bb >= 2 and fair - (bb + 1) >= self.EDGE_IN:
                 pb = bb + 1
             else:
                 pb = bb
-                while fair - pb < self.EDGE:
+                eb = self.EDGE + (self.Q_HOLD_EDGE * -self.inv / self.MAX_POS if self.inv < 0 else 0.0)
+                while fair - pb < eb:
                     pb -= 1
             if bb - fair >= self.EDGE_TAKE:
                 pa = math.ceil(fair + self.EDGE_TAKE) if self.Q_SWEEP else bb
@@ -266,13 +316,16 @@ class Round3Strategy(BaseStrategy):
                 pa = ba - 1
             else:
                 pa = ba
-                while pa - fair < self.EDGE:
+                ea = self.EDGE + (self.Q_HOLD_EDGE * self.inv / self.MAX_POS if self.inv > 0 else 0.0)
+                while pa - fair < ea:
                     pa += 1
             self._side(1, pb)
             self._side(-1, pa)
             return
 
         fair = mid + self.V_K_S * (self.s - mid) + self.V_K_FLOW * fx - self.V_K_INV * self.inv
+        if self.V_RECYCLE >= 0:
+            self._recycle(fair, bb, ba, self.V_RECYCLE, self.V_EDGE_TAKE)
         if fair - ba >= self.V_EDGE_TAKE:
             self._side(1, math.floor(fair - self.V_EDGE_TAKE))
         elif self.inv < 0:
@@ -294,6 +347,8 @@ class Round3Strategy(BaseStrategy):
 
     def _observe(self, sign: int, price: int, depth: int, now: int) -> None:
         """One new market limit order: HMM forward step, then (if near the touch) a Kalman update."""
+        if self.H_LIM:
+            self._observe_lim(now)
         # HMM on the order's distance from the mid
         n = min(self.H_NMAX, max(0, round(2 * (sign * (price - self.mid) - 0.5))))
         rq = self.nq / (1.0 + self.nq)
@@ -343,6 +398,27 @@ class Round3Strategy(BaseStrategy):
             self.iq = 1.0 / max(mq, 0.01)
             self.iv = max(self.iq * 1.05, 1.0 / max(mv, 0.01))
         self.ioc_t = now
+
+    def _observe_lim(self, now: int) -> None:
+        """A new market limit order: the gap since the previous one is (weak) evidence for the regime.
+
+        Round 3: the limit rate rises with volatility (window correlation +0.85) but only by ~7%, so each gap carries
+        little evidence; the many gaps per second add up. Rates per state learned like the IOC rates.
+        """
+        if self.lim_t:
+            g = min(1.0, (now - self.lim_t) / 1e6)
+            lq, lv = self.lq, self.lv
+            llr = self.H_LIM_W * (math.log(lv / lq) - (lv - lq) * g)   # log(l_vol / l_quiet)
+            llr = max(-20.0, min(20.0, llr))
+            pv = self.pv
+            a = pv * math.exp(llr)
+            pv = a / (a + 1.0 - pv)
+            self.pv = pv
+            mq = 1.0 / lq + self.H_LIM_LR * (1.0 - pv) * (g - 1.0 / lq)
+            mv = 1.0 / lv + self.H_LIM_LR * pv * (g - 1.0 / lv)
+            self.lq = 1.0 / max(mq, 1e-4)
+            self.lv = max(self.lq * 1.02, 1.0 / max(mv, 1e-4))
+        self.lim_t = now
 
     def _scan_new(self, views, sign: int, now: int) -> None:
         """Feed market orders newer than max_id to the filters."""
@@ -566,3 +642,21 @@ class Round3Strategy(BaseStrategy):
             self.lev_id = None
         if oid == self.unw_id:
             self.unw_id = None
+        if oid == self.rec_id:
+            self.rec_id = None
+
+    def _recycle(self, fair: float, bb: int, ba: int, gap: float, take_edge: float) -> None:
+        """Free capacity: close the whole position at the touch once the book has caught up with fair.
+
+        Long: sell at the best bid when it is within gap of fair and buying has no edge left (fair - ba < take_edge);
+        short mirrors it. Inside MAX_POS only (an overshoot belongs to the unwind), one IOC in flight.
+        """
+        inv = self.inv
+        if not inv or self.rec_id is not None or self.unw_id is not None or abs(inv) > self.MAX_POS:
+            return
+        if inv > 0 and bb >= fair - gap and fair - ba < take_edge:
+            self.rec_id = self.send_order(OrderRequest(side=Side.SELL, price=bb, quantity=inv, order_type=OrderType.IOC))
+            self.orders[self.rec_id] = [-1, bb, inv]
+        elif inv < 0 and ba <= fair + gap and bb - fair < take_edge:
+            self.rec_id = self.send_order(OrderRequest(side=Side.BUY, price=ba, quantity=-inv, order_type=OrderType.IOC))
+            self.orders[self.rec_id] = [1, ba, -inv]

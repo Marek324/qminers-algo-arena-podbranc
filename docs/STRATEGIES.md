@@ -161,8 +161,8 @@ Tested after the generator forensics in [DATA_ANALYSIS.md](DATA_ANALYSIS.md) (al
 Built for `round2_public` (6,000 s, hindsight max 1,705,028). The round-1 market makers all lose there (`imbalance_mm` −62,712, `adaptive_mm_plus` −62,278, `queue_mm` −150,260). The tape alternates between a quiet and a volatile regime ([DATA_ANALYSIS.md](DATA_ANALYSIS.md#two-regimes)), and the split explains the losses: `imbalance_mm` makes +236k in the quiet spells and loses −298k in the volatile ones (958 s, 16% of the time).
 
 1. **Quiet:** `imbalance_mm` unchanged (per-side S average, imbalance, flow, inventory skew, cross at `EDGE_TAKE`).
-2. **Regime switch:** EMA over new limit orders of |price − mid| (`tools/regime_score.py`). Volatile above 1.6, quiet again below 1.35 after at least 3 s.
-3. **Volatile:** cancel all quotes. Take the stale side by IOC when the clamp-aware S estimate (`tools/clamped_ema.py`, alpha 0.25, c 1.1) is `V_TAKE` = 0.75 ticks through the opposite best price, sweeping up to S − 0.5, for all the room under 100. Hold until an opposite signal flips the position. After the spell the quiet maker unwinds it.
+2. **Regime switch:** EMA over new limit orders of |price − mid| (formerly `tools/regime_score.py`, deleted; the code is inline in `regime_mm.py`). Volatile above 1.6, quiet again below 1.35 after at least 3 s.
+3. **Volatile:** cancel all quotes. Take the stale side by IOC when the clamp-aware S estimate (formerly `tools/clamped_ema.py`, deleted; inline in `regime_mm.py`, alpha 0.25, c 1.1) is `V_TAKE` = 0.75 ticks through the opposite best price, sweeping up to S − 0.5, for all the room under 100. Hold until an opposite signal flips the position. After the spell the quiet maker unwinds it.
 
 | Version (round2_public) | 1st half | 2nd half | full |
 |---|---|---|---|

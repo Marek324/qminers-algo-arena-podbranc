@@ -4,11 +4,12 @@ Usage:
   python3 -I scripts/sweep.py strategies/round1/adaptive_mm.py data/round1.csv \
       -p TAKE_THRESHOLD=0.5,1,2 -p TAKE_POS=1,5
 
-Each -p overrides a top-level `NAME = value` constant in the strategy file; comma-separated values form a
-grid. Prints one row per combination: PnL per tape, total, worst tape, fills, max q95 |inventory|, penalty.
+Each -p overrides a `NAME = value` constant in the strategy file, at module level or in a class body (found with
+ast, so text in docstrings is never touched); comma-separated values form a grid. Prints one row per combination: PnL per tape, total, worst tape, fills, max q95 |inventory|, penalty.
 Temporary strategy copies and outputs go to the system temp dir.
 """
 import argparse
+import ast
 import itertools
 import json
 import re
@@ -25,6 +26,27 @@ def run(strategy: Path, tape: Path, out: Path) -> dict:
         check=True, capture_output=True,
     )
     return json.loads((out / 'result.json').read_text())
+
+
+def set_param(text: str, name: str, value: str) -> str:
+    """Return text with the first module-level or class-body `name = ...` assignment set to value (comment kept)."""
+    tree = ast.parse(text)
+    bodies = [tree.body] + [n.body for n in tree.body if isinstance(n, ast.ClassDef)]
+    for body in bodies:
+        for node in body:
+            if not isinstance(node, ast.Assign):
+                continue
+            if not any(isinstance(t, ast.Name) and t.id == name for t in node.targets):
+                continue
+            if node.end_lineno != node.lineno:
+                raise SystemExit(f'parameter {name} spans several lines; edit it by hand')
+            lines = text.split('\n')
+            i = node.lineno - 1
+            lines[i], n = re.subn(rf'^(\s*){name}\s*=\s*[^#]*', rf'\g<1>{name} = {value}  ', lines[i], count=1)
+            if n == 0:
+                raise SystemExit(f'could not rewrite line {node.lineno} for {name}')
+            return '\n'.join(lines)
+    raise SystemExit(f'parameter {name} not found')
 
 
 def main() -> None:
@@ -48,9 +70,7 @@ def main() -> None:
     for i, combo in enumerate(combos):
         text = source
         for name, value in zip(names, combo):
-            text, n = re.subn(rf'^{name} = [^#\n]*', f'{name} = {value}  ', text, count=1, flags=re.M)
-            if n == 0:
-                raise SystemExit(f'parameter {name} not found in {args.strategy}')
+            text = set_param(text, name, value)
         path = tmp / f'combo{i}.py'
         path.write_text(text)
         for j, tape in enumerate(args.tapes):

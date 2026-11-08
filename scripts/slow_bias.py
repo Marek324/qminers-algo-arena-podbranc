@@ -95,3 +95,26 @@ for base in (50, 100):
     fut = np.r_[m[60:] - m[:-60], np.full(60, np.nan)]
     r, t, k = corr_t(dist, fut, 60)
     print(f'   base {base}: corr(mid - nearest, next 60 s) r {r:+.3f} t {t:+.2f} n {k} (negative = pull)')
+
+print('\n6) anchor reversion null: paths rebuilt from 10000 out of shuffled 60 s return blocks (keeps jumps and storms)')
+rng = np.random.default_rng(0)
+r1 = np.diff(m)
+nb = len(r1) // 60
+blocks = r1[:nb * 60].reshape(nb, 60)
+
+
+def anchor_stats(path):
+    out = []
+    for h in (60, 300, 600):
+        fut = np.r_[path[h:] - path[:-h], np.full(h, np.nan)]
+        x, y = (path - 10000.0)[::h], fut[::h]
+        k = np.isfinite(y)
+        out.append(np.corrcoef(x[k], y[k])[0, 1])
+    return np.array(out)
+
+
+obs = anchor_stats(m)
+null = np.array([anchor_stats(np.r_[10000.0, 10000.0 + np.cumsum(blocks[rng.permutation(nb)].ravel())]) for _ in range(2000)])
+for i, h in enumerate((60, 300, 600)):
+    print(f'   h {h:4d}s: observed r {obs[i]:+.3f}, null mean {null[:, i].mean():+.3f}, sd {null[:, i].std():.3f}, '
+          f'P(null <= observed) {np.mean(null[:, i] <= obs[i]):.3f}')

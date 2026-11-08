@@ -1432,3 +1432,20 @@ trigger lags and cuts quiet turnover.
 Why a vol forecast pays so little here: the only instrument is the asset itself with a ±100 cap. A vol forecast earns
 through vol-sensitive payoffs (options) or through size, and in storms the size is already pinned at the cap. The
 forecast's one use, switching quiet making / storm taking at the right moment, is what the HMM already does.
+
+### Round 4: quote size by the vol forecast (2026-11-08)
+
+`r4m_mldi.py` (`scripts/grid_size.txt`; base 1,204,809): quiet quote size QTY · clamp((QV_REF / vol)^QV_POW,
+QV_MIN, QV_MAX), and K_INV · vol / KI_REF.
+
+| variant | full | quarters vs base |
+|---|---|---|
+| bigger when calm, ref 1.5 (max 1.5 / 2 / 3 identical: vol never below 1) | **1,214,033** | +5.9k / −0.6k / −1.5k / +0.3k |
+| ref 2.0 / 1.0 | 1,203k / 1,204k | q4 −7k / −5k |
+| sqrt form | 1,208k | +3.7k / −0.7k / −1.3k / +0.3k |
+| min 0.25 (smaller when busy) | 1,195k | down |
+| bigger when busy (reverse) | 1,182k | down in all 4 |
+| K_INV scaled by vol, ref 1.5 / 3 | 917k / 1,131k | down in all 4 |
+
+The direction agrees with the mechanism (bigger quotes in calm, the reverse loses), but the gain is thin and mostly
+q1. Switched on in the long-shot file: **r4m_mldi 1,214,033** (exact file re-run, penalty 9,036).

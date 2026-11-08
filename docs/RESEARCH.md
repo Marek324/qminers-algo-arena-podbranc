@@ -1448,4 +1448,4 @@ QV_MIN, QV_MAX), and K_INV · vol / KI_REF.
 | K_INV scaled by vol, ref 1.5 / 3 | 917k / 1,131k | down in all 4 |
 
 The direction agrees with the mechanism (bigger quotes in calm, the reverse loses), but the gain is thin and mostly
-q1. Switched on in the long-shot file: **r4m_mldi 1,214,033** (exact file re-run, penalty 9,036).
+q1. Switched on in `strategies/round4/r4m_mldi_v2.py`: **1,214,033** (penalty 9,036); `r4m_mldi.py` stays the 1,204,809 version.

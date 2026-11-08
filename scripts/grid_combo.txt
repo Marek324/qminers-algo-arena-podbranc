@@ -1,0 +1,19 @@
+mldi:
+vet05: V_EDGE_TAKE=0.5
+vet06: V_EDGE_TAKE=0.6
+vks085: V_K_S=0.85
+vks095: V_K_S=0.95
+vkf10: V_K_FLOW=1.0
+vkf14: V_K_FLOW=1.4
+vmom015: V_K_MOM=0.15
+vmom005: V_K_MOM=0.05
+kmom005: K_MOM=0.05
+dimb025: V_K_DIMB=0.25
+far05: V_K_FAR=0.5
+far025: V_K_FAR=0.25
+esz1: ESZ_FULL=1.0
+jc: JUMP_CANCEL=1
+weak50: WEAK_POS=50
+vqty250: V_QTY=250
+pon025: P_ON=0.25
+pon035: P_ON=0.35

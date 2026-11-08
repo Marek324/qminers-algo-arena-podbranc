@@ -107,6 +107,8 @@ class R3SniperMMStrategy(BaseStrategy):
     CONFIRM_N = 1        # far orders on the same side needed (2+: independent confirmation of the jump)
     CONFIRM_US = 50_000  # ... within this long
     CONFIRM_TOL = 3      # ... agreeing on the new level to this many ticks
+    DEPTH_SHRINK = 1.0   # new S = opposite best + DEPTH_SHRINK * (far price - opposite best); round 3 far orders overstate
+                         # the jump by about 1.41x, so 0.6-0.7 places the sweep limit right (1.0: price -+ X_MEAN)
     SNIPE_QUIET_ONLY = False  # snipe only while hmm_mm's HMM still says quiet (it is not sweeping the stale side itself)
     # flow
     FLOW_TAU_US = 100_000
@@ -355,7 +357,7 @@ class R3SniperMMStrategy(BaseStrategy):
         if self.SNIPE_QUIET_ONLY and self.pv >= self.P_ON:
             return
         if sign < 0:   # a buy far below: S fell to about price + X_MEAN, the bids above it are stale
-            s_new = price + self.X_MEAN
+            s_new = price + self.X_MEAN if self.DEPTH_SHRINK >= 1.0 else self.ba - 1 - self.DEPTH_SHRINK * (self.ba - 1 - price)
             limit_px = math.ceil(s_new + self.SNIPE_MARGIN)
             if self.bb < limit_px:
                 return
@@ -363,7 +365,7 @@ class R3SniperMMStrategy(BaseStrategy):
             q = min(self.SNIPE_POS + self.inv, 1000 + self.inv - resting)
             side, sg = Side.SELL, -1
         else:          # a sell far above: S rose, the asks below it are stale
-            s_new = price - self.X_MEAN
+            s_new = price - self.X_MEAN if self.DEPTH_SHRINK >= 1.0 else self.bb + 1 + self.DEPTH_SHRINK * (price - self.bb - 1)
             limit_px = math.floor(s_new - self.SNIPE_MARGIN)
             if self.ba > limit_px:
                 return

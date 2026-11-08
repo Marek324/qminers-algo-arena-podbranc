@@ -1478,3 +1478,8 @@ the rest of that file and is fragile.
 
 The storm depth-imbalance layer transferred (public +48k per 6,000 s, validation +69k per 12,000 s); the vol-forecast
 quote size in v2 did not add (−4k, noise), as its dependence on the rest of the file suggested.
+
+**Robustness of r4m_mldi** (`scripts/robustness.py`, round4_public): 6 / 6 chunks profitable (worst 111,711), mirrored
+1,205,137 (symmetric), bootstrap 8 / 8 profitable (p05 326,525, median 367,861); same "regime dependence" flag as
+r4m_risk_a (chunk PnL tracks |drift| +0.77, the storm share). Paired against r4m_risk_a on the same windows: chunks
++5.9k / +22.6k / +20.1k / +2.2k / −1.5k / −3.3k (4 / 6 up), bootstrap 4 / 8 up, mean +2.2k.

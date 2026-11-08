@@ -344,10 +344,10 @@ class R4mTrendStrategy(BaseStrategy):
         mom = mid - mq[0][1]
         if not self.t0:
             self.t0 = snapshot.timestamp_us
-        tr = 0.0
+        trb = 0.0
         if self.TR_H:
             u = min(1.0, (snapshot.timestamp_us - self.t0) / (self.TR_T * 1e6))
-            tr = self.TR_H * (self.TR_C1 + 2 * self.TR_C2 * u + 3 * self.TR_C3 * u * u) / self.TR_T
+            trb = self.TR_H * (self.TR_C1 + 2 * self.TR_C2 * u + 3 * self.TR_C3 * u * u) / self.TR_T
         self._unwind(snapshot.timestamp_us, bb, ba)
         now = snapshot.timestamp_us
         if not self.s:
@@ -389,7 +389,7 @@ class R4mTrendStrategy(BaseStrategy):
         imb = (bq - aq) / (bq + aq)
 
         if self.pv < self.P_ON:
-            fair = mid + self.K_S * (self.s - mid) + self.K_IMB * imb + self.K_FLOW * fx - self.K_INV * self.inv + self.K_MOM * mom + tr
+            fair = mid + self.K_S * (self.s - mid) + self.K_IMB * imb + self.K_FLOW * fx - self.K_INV * self.inv + self.K_MOM * mom + trb
             if fair - ba >= self.EDGE_TAKE:
                 pb = math.floor(fair - self.EDGE_TAKE) if self.Q_SWEEP else ba
             elif ba - bb >= 2 and fair - (bb + 1) >= self.EDGE_IN:
@@ -417,7 +417,7 @@ class R4mTrendStrategy(BaseStrategy):
                 self._clear(-1)
             return
 
-        fair = mid + self.V_K_S * (self.s - mid) + self.V_K_FLOW * fx - self.V_K_INV * self.inv + self.V_K_MOM * mom + tr
+        fair = mid + self.V_K_S * (self.s - mid) + self.V_K_FLOW * fx - self.V_K_INV * self.inv + self.V_K_MOM * mom + trb
         if fair - ba >= self.V_EDGE_TAKE:
             self._side(1, math.floor(fair - self.V_EDGE_TAKE) if self.V_SWEEP else ba, self.V_QTY)
         else:

@@ -1213,3 +1213,21 @@ The sniper adds about +56k and momentum +34k on this base too.
 Three independent bases (our deep_clear-based r4m_risk_a, Jaro's r4_best_snipe, Jakub's IMM base) all land at
 1.14–1.16M on round4_public with the same sniper: the design family is at its ceiling with the information the feed
 gives. GitHub has no other team's code for this arena (only QminersOrg/qminers-algo-arena itself, one commit, no forks).
+
+### Round 4: ideas from public competition code (2026-11-08)
+
+GitHub, worldwide: the closest analogues are the IMC Prosperity write-ups (TimoDiehm/imc-prosperity-3 "Frankfurt
+Hedgehogs", ericcccsliu/imc-prosperity-2, chrispyroberts/imc-prosperity-3, CarterT27/imc-prosperity-3), Optiver Ready
+Trader Go repos, hftbacktest, and Avellaneda-Stoikov implementations. No public code for this arena besides
+QminersOrg/qminers-algo-arena. What carries over:
+
+- **Their biggest edges came from reverse-engineering how bot flow moves the hidden price** (a "smart taker" filling
+  orders near a hidden fair value, an "informed trader" buying at daily lows). Our analogue is the generator's permanent
+  IOC impact (fit 0.093 · size^0.3). `strategies/round4/r4m_push.py` moves S_hat by PUSH_K · sign · size^PUSH_B on
+  every market IOC at once: PUSH_K 0.03 / 0.06 / 0.093 / 0.15 → 1,124k / 1,088k / 1,028k / 918k (r4m_risk_a 1,156,545);
+  as a replacement for the flow term (K_FLOW 0) 1,147k, half-and-half 1,152k. The flow term already prices this push;
+  adding it again double-counts.
+- **"Wall mid"** (fair = mid of the deepest levels, which a designated bot quotes around the true price): our analogue is
+  the generator's new orders at S ± X, which the Kalman filter already reads.
+- **Ready Trader Go** write-ups: mid / imbalance market makers with spread from recent volatility; nothing beyond
+  imbalance_mm.

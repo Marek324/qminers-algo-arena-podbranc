@@ -109,6 +109,8 @@ class R3SniperMMStrategy(BaseStrategy):
     CONFIRM_TOL = 3      # ... agreeing on the new level to this many ticks
     DEPTH_SHRINK = 1.0   # new S = opposite best + DEPTH_SHRINK * (far price - opposite best); round 3 far orders overstate
                          # the jump by about 1.41x, so 0.6-0.7 places the sweep limit right (1.0: price -+ X_MEAN)
+    EXIT_PASSIVE = False # rest the overshoot as one limit order at the new S for the post-jump taker surge to lift
+    PASSIVE_OFF = 0.0    # its price: S_new + PASSIVE_OFF for a long position (mirrored for a short)
     SNIPE_QUIET_ONLY = False  # snipe only while hmm_mm's HMM still says quiet (it is not sweeping the stale side itself)
     # flow
     FLOW_TAU_US = 100_000
@@ -162,6 +164,7 @@ class R3SniperMMStrategy(BaseStrategy):
         self.unwind_id = None
         self.over_since = 0
         self.far_seen: list = []  # (time, sign, price) of recent far orders
+        self.pexit_id = None      # resting passive exit order
 
     def _cancel(self, oid: str) -> None:
         if oid not in self.cancel_sent:
@@ -390,6 +393,18 @@ class R3SniperMMStrategy(BaseStrategy):
         if self.unwind_id is not None:
             return
         late = now - self.over_since >= self.MAX_OVER_US
+        if self.EXIT_PASSIVE:
+            if not late:
+                if self.pexit_id is None:
+                    sg = -1 if inv > 0 else 1
+                    px = max(1, round(self.snipe_s + self.PASSIVE_OFF)) if inv > 0 else max(1, round(self.snipe_s - self.PASSIVE_OFF))
+                    q = abs(inv) - self.MAX_POS
+                    side = Side.SELL if inv > 0 else Side.BUY
+                    self.pexit_id = self.send_order(OrderRequest(side=side, price=px, quantity=q, order_type=OrderType.LIMIT))
+                    self.orders[self.pexit_id] = [sg, px, q]
+                return
+            if self.pexit_id is not None and self.pexit_id not in self.cancel_sent:
+                self._cancel(self.pexit_id)  # late: drop the passive exit, IOC the rest below
         if inv > 0:
             target = math.floor(self.snipe_s - self.UNWIND_GAP)
             if late or bb >= target:
@@ -423,7 +438,7 @@ class R3SniperMMStrategy(BaseStrategy):
 
     def _clear(self, sign: int) -> None:
         for oid, o in self.orders.items():
-            if o[0] == sign:
+            if o[0] == sign and oid != self.pexit_id:
                 self._cancel(oid)
 
     def _side(self, sign: int, target: int) -> None:
@@ -431,7 +446,7 @@ class R3SniperMMStrategy(BaseStrategy):
         at_target = 0
         keep = []
         for oid, o in self.orders.items():
-            if o[0] != sign or oid in self.cancel_sent:
+            if o[0] != sign or oid in self.cancel_sent or oid == self.pexit_id:
                 if o[0] == sign:
                     resting += o[2]
                 continue
@@ -481,5 +496,7 @@ class R3SniperMMStrategy(BaseStrategy):
             self.snipe_id = None
         if oid == self.unwind_id:
             self.unwind_id = None
+        if oid == self.pexit_id:
+            self.pexit_id = None
         self.orders.pop(oid, None)
         self.cancel_sent.discard(oid)

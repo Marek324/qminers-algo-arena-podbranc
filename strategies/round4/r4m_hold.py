@@ -171,6 +171,7 @@ class R4mHoldStrategy(BaseStrategy):
     HOLD_MIN = 50        # only for |inv| at least this
     Q_AGE_K = 0.0        # quiet: extra inventory skew (ticks per lot) on a position older than Q_AGE_US
     Q_AGE_US = 5_000_000
+    V_IOC = 0            # 1: storm takes go out as IOC (no resting leftovers that fill passively once stale)
     K_MOM = 0.1
     V_K_MOM = 0.1
     MOM_US = 500_000
@@ -305,6 +306,7 @@ class R4mHoldStrategy(BaseStrategy):
         self.pbb = 0
         self.pba = 0
         self.open_t = 0
+        self.ioc_pend = {1: None, -1: None}
         self.now = 0
 
     def _cancel(self, oid: str) -> None:
@@ -422,6 +424,14 @@ class R4mHoldStrategy(BaseStrategy):
                     es += h
                 else:
                     eb += h
+        if self.V_IOC:
+            self._clear(1)
+            self._clear(-1)
+            if fair - ba >= eb:
+                self._ioc(1, math.floor(fair - self.V_EDGE_TAKE) if self.V_SWEEP else ba)
+            if bb - fair >= es:
+                self._ioc(-1, math.ceil(fair + self.V_EDGE_TAKE) if self.V_SWEEP else bb)
+            return
         if fair - ba >= eb:
             self._side(1, math.floor(fair - self.V_EDGE_TAKE) if self.V_SWEEP else ba, self.V_QTY)
         else:
@@ -430,6 +440,17 @@ class R4mHoldStrategy(BaseStrategy):
             self._side(-1, math.ceil(fair + self.V_EDGE_TAKE) if self.V_SWEEP else bb, self.V_QTY)
         else:
             self._clear(-1)
+
+    def _ioc(self, sign: int, px: int) -> None:
+        if self.ioc_pend[sign] is not None:
+            return
+        q = min(self.V_QTY, self.MAX_POS - sign * self.inv)
+        if q < self.MIN_NEW:
+            return
+        oid = self.send_order(OrderRequest(side=Side.BUY if sign > 0 else Side.SELL, price=px, quantity=q, order_type=OrderType.IOC))
+        self.orders[oid] = [sign, px, q]
+        self.ioc_pend[sign] = oid
+        self.cancel_sent.add(oid)
 
     def _qage(self, now: int) -> float:
         if not self.Q_AGE_K or abs(self.inv) < self.HOLD_MIN or now - self.open_t < self.Q_AGE_US:
@@ -706,10 +727,13 @@ class R4mHoldStrategy(BaseStrategy):
                 self._drop(oid)
         elif st == OrderStatus.CANCELED:
             self._drop(oid)
-        elif st == OrderStatus.REJECTED and oid not in self.cancel_sent:
+        elif st == OrderStatus.REJECTED and (oid not in self.cancel_sent or oid == self.ioc_pend[o[0]]):
             self._drop(oid)
 
     def _drop(self, oid: str) -> None:
+        for k in (1, -1):
+            if self.ioc_pend[k] == oid:
+                self.ioc_pend[k] = None
         if oid == self.snipe_id:
             self.snipe_id = None
         if oid == self.unwind_id:

@@ -152,3 +152,38 @@ Findings:
 - Remaining gap: the best public setting gives ~1.0× there but only ~0.90× on the eval twin. The eval tape is longer
   and stormier, so the 1 s probe resolution (the twin interpolates S between samples) likely costs more there.
   Treat eval-twin scores as ~10 % pessimistic for hmm_mm-like strategies.
+
+### Calibration grid 3 (`logs/twin_cal3`, 2026-11-08) and the current eval twin
+
+Grid around the table above (`scripts/twin_calibrate.py data/validation_round3 --params round3_public`, split with
+`--cfgs` over both servers): impact_k ×0.2 / ×0.33, sigma_storm ×0.5 / ×0.6 / ×0.8, IOC rate ×1.35 / ×1.6. Anchors:
+the three hold probes, hmm_mm (`a38b1737`, 1,028,431) and three small losing submissions (`d36862ac`, `37b6156d`,
+`156df7c6`). Mean loss per config, best first:
+
+| cfg | impact_k | sigma_storm | IOC rate | mean loss | hmm_mm twin / arena |
+|---|---|---|---|---|---|
+| **9** | ×0.33 | ×0.6 | ×1.6 | **0.720** | 0.99× |
+| 7 | ×0.33 | ×0.5 | ×1.6 | 0.721 | 1.04× |
+| 3 | ×0.2 | ×0.6 | ×1.6 | 0.758 | 1.06× |
+| 1 | ×0.2 | ×0.5 | ×1.6 | 0.799 | 1.04× |
+| 10 | ×0.33 | ×0.8 | ×1.35 | 1.005 | 0.87× |
+
+IOC ×1.6 wins in every pair; with it hmm_mm lands at ~1.0× (vs 0.90× for the best setting of the table above).
+**The working eval twin is cfg 9**: `logs/twin_cal3/twin_9.csv`, copied to `data/r3_twin9.csv` on both compute
+servers (git-ignored, 172 MB; regenerate with the cfg 9 multipliers if missing).
+
+**Limitations — read before tuning on it:**
+- **Only hmm_mm-like market makers are calibrated.** The three small losing anchors are off by 0.2×–1.6× in PnL with
+  60 s correlation −0.3 to +0.6 in every config. Taker-heavy, small-size or losing strategies are not reproduced.
+- **Sub-second price moves are synthetic.** The path comes from 1 s probe samples; S is interpolated between them and
+  the generator places the far orders that announce a jump. Millisecond jump strategies (`r3_sniper_mm`, `r3_fire`,
+  any overshoot/leverage logic) see generated jump precursors, not the real ones: a gain on the twin is not evidence
+  of a gain on the arena. Use `round3_public` (real tape) as the judge for those; the twin only checks they don't
+  blow up on a longer, stormier tape.
+- **One seed, one anchor that matters.** The fit hinges on a single hmm_mm run (SE ~43k); a ±5 % ratio is within
+  noise. The leave-one-out check from the script header was not done for this grid.
+- **No new anchors yet.** The tuned final submission (`data/validation_round3/0138_907826f2`, 1,076,934) is
+  downloaded but not in the grid; adding it is the cheapest way to test the twin out of sample (hmm_mm-tuned should
+  come out ~1.05× of hmm_mm on the twin if it ranks correctly).
+- Treat twin PnL as a ranking tool for parameter changes of the hmm_mm family, accepting a change only if it also
+  holds on `round3_public`.

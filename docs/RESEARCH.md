@@ -1347,3 +1347,26 @@ neighbouring settings, but it pays only in q1 / q2 (paired robustness chunks als
 
 Nothing here is a bias to lean on, even accepting some overfit: each one is inside what a random walk with the tape's
 own jumps and storms produces.
+
+### Round 4: session-shape bet and simulator hacks (rejected, 2026-11-08)
+
+**Bet that the hidden tape repeats round4_public's shape** (`strategies/round4/r4m_trend.py`, `scripts/fit_trend.py`):
+cubic of the mid against u = t / 6000 s, S(u) = 9804 + 883u − 4881u² + 3859u³ (flat, decline, bottom near u 0.8,
+recovery; residual sd 86 ticks); fair leans by TR_H seconds of the curve's slope, stretched over TR_T.
+
+| TR_H (s) | round4_public, TR_T 6000 (in-sample, exact shape) | round3_public (other shape) | round4_public, TR_T 12000 |
+|---|---|---|---|
+| off | 1,156,545 | 603,651 | 1,156,545 |
+| 5 | 900,554 | 355,392 | — |
+| 10 | 617,167 | 205,336 | 885,820 |
+| 20 | 334,059 | 101,618 | 597,671 |
+| 40 | 217,087 | 29,844 | 336,058 |
+
+It loses even in-sample: a fair lean of half a tick against 0.2–0.55 tick edges turns the strategy into a one-sided
+taker. The ceiling is small anyway: −100 lots held through the whole public tape earn 100 × 446 ≈ 45k (about 90k on a
+12,000 s tape if the shape repeated exactly), and the hidden validation tape ended about +350, opposite to the fit.
+
+**Simulator hacks checked:** the public book shows only id, side, price, quantity, owner (no lifespan); cancel timers
+are exponential, so order age says nothing about the remaining life; the final mark is a liquidation sweep against
+market orders only (our orders cannot move it; ending flat would save only the sweep cost, hundreds of dollars); the breach
+penalty is integrated continuously. The order-id gaps are the one leak, and the sniper already uses them.

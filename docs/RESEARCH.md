@@ -1125,3 +1125,25 @@ move 0.5 s ahead on [1, S_hat − mid, imbalance, flow, 0.5 s momentum], fair bl
 Full tape: K_RLS 0.2 / 0.3 / 0.5 / 1.0 give 1,132,967 / 1,126,783 / 1,135,216 / 1,102,282; quiet-only 0.5 1,153,562;
 storm-only 0.5 1,135,448; 1 s horizon 1,160,549 (+4k; quarters +16k / −2k / −5k / −3k, noise). The fixed-weight fair
 already holds what an online linear model learns from these features, as on round 3.
+
+### Round 4: how far can sniping go? (2026-11-08)
+
+**Simulator ceiling** (`scripts/make_lever_oracle.py` on the round-4 hindsight schedule, Q 900, base `hmm_imm_b2`
+1,039,171): all 349 excursions 2,185,632 (+1,146k, penalty 2.04M); the ones worth ≥ 5k on the tape 1,926,725 (+888k,
+penalty 625k); ≥ 20k (about 9 jumps) 1,437,641 (+398k, penalty 59k). Perfect timing is worth about +0.9M per 6,000 s;
+`r4m_risk_a`'s sniper takes about +51k of it (5%). The oracle enters before the jump; every trigger we have fires after it.
+
+**New triggers and leverage rules on `r4m_risk_a`** (`r4m_dev2.py`, `r4m_dev3.py`; full tape, `r4m_risk_a` 1,156,545):
+
+| Variant | round4_public | penalty | quarters vs risk_a |
+|---|---|---|---|
+| multi-level sweep trigger, 3 / 4 / 5 levels | 1,079k / 1,082k / 1,087k | ~20k | −2k to −53k, all 4 down |
+| depth-collapse trigger (side < 0.3 / 0.2 of EMA with an id gap; 0.3 with 2 gaps) | 1,080k / 1,088k / 1,126k | 15–26k | mostly down |
+| post-jump lean in fair (0.5–2 ticks for 3–10 s) | 1,154k–1,156k | 7,963 | ±1k (no effect) |
+| clamp-confirmed id gaps (2 missing ids + 2 / 3 clamps) | 1,154k / 1,157k | 13k / 8k | −3k / 0 |
+| edge leverage: fair 5 / 8 / 12 / 20 ticks through the book | 795k / 1,095k / 1,149k / 1,156k | 511k / 81k / 24k / 9k | worse the lower the threshold |
+
+Every extra trigger adds false fires faster than real jumps, and leverage on our own S_hat edge is reactive (the
+Kalman filter learns the jump from the same late orders). With the information the feed gives, the id-gap trigger is
+the only one early enough; the remaining 95% of the ceiling needs knowing a jump before it happens, and calm
+stretches are memoryless (DATA_ANALYSIS.md).

@@ -1,0 +1,9 @@
+base:
+h5_6k: TR_H=5, TR_T=6000
+h10_6k: TR_H=10, TR_T=6000
+h20_6k: TR_H=20, TR_T=6000
+h40_6k: TR_H=40, TR_T=6000
+h80_6k: TR_H=80, TR_T=6000
+h10_12k: TR_H=10
+h20_12k: TR_H=20
+h40_12k: TR_H=40

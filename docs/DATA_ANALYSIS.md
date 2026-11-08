@@ -452,7 +452,11 @@ detector saw only 1–2 missing ids, and the net taker flow in the 0.9 s after o
 net flow +947, −62 with +1,749, +55 with −2,470), so taker flow cannot supply the direction. Tuning a second trigger
 on these 15 events would be overfitting; the sniper keeps the tool's round-3 defaults.
 
-**Generator transfer check** (`scripts/expected_pnl.py`): pending at the time of writing.
+**Generator transfer check** (`scripts/expected_pnl.py`, 8 generated 20-minute sessions from the fitted round-4
+model): the ranking inverts. Generated: `hmm_imm_sv11` 365k/h, `hmm_deep_clear_r3` 346k/h, `r4m_safe` 299k/h,
+`r4m_risk_b` 203k/h, `r4m_risk_a` 205k/h (reference market maker 422k/h). Real tape: `r4m_risk_a` 694k/h,
+`r4m_risk_b` 675k/h, `r4m_safe` 644k/h, `hmm_deep_clear_r3` 628k/h, `hmm_imm_sv11` 611k/h. The generator without
+momentum-driven IOC sides is not a usable twin for round 4.
 
 **Next:** a momentum term in fair (past 1 s return, stronger flow weight) is the obvious new signal; retune the
 hidden-price σ and the take edges for the higher volatility.

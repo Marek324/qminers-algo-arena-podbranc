@@ -229,6 +229,8 @@ class R4mDevStrategy(BaseStrategy):
     UNWIND_GAP = 2.0     # close the excess at S_new -+ UNWIND_GAP once the book reaches it
     MAX_OVER_US = 500_000  # ... or through the touch after this long over MAX_POS
     UNWIND_SLIP = 2
+    EXIT_PASSIVE = 0     # 1: rest the excess at S_new -+ PASSIVE_OFF for the post-jump IOC surge until MAX_OVER_US
+    PASSIVE_OFF = 0.0
     SNIPE_COOLDOWN_US = 1_000_000
     KILL_RATE_N = 4              # more than this many snipes within KILL_RATE_US stops sniping for good
     KILL_RATE_US = 600_000_000
@@ -299,6 +301,7 @@ class R4mDevStrategy(BaseStrategy):
         self.snipe_times: deque = deque()
         self.over_total = 0
         self.over_last = 0
+        self.pexit_id = None
         # id-gap jump detector
         self.idg = IdGapJump(self.IDG_WINDOW_US, self.IDG_MISSING) if (self.IDG_P or self.IDG_SNIPE) else None
         self.idg_t = 0
@@ -601,6 +604,8 @@ class R4mDevStrategy(BaseStrategy):
         if abs(inv) <= self.MAX_POS:
             self.over_since = 0
             self.over_last = 0
+            if self.pexit_id is not None and self.pexit_id not in self.cancel_sent:
+                self._cancel(self.pexit_id)
             return
         if self.over_last:
             self.over_total += now - self.over_last
@@ -610,6 +615,18 @@ class R4mDevStrategy(BaseStrategy):
         if self.unwind_id is not None:
             return
         late = now - self.over_since >= self.MAX_OVER_US
+        if self.EXIT_PASSIVE:
+            if not late:
+                if self.pexit_id is None:
+                    sg = -1 if inv > 0 else 1
+                    px = max(1, round(self.snipe_s - self.PASSIVE_OFF)) if inv > 0 else max(1, round(self.snipe_s + self.PASSIVE_OFF))
+                    q = abs(inv) - self.MAX_POS
+                    side = Side.SELL if inv > 0 else Side.BUY
+                    self.pexit_id = self.send_order(OrderRequest(side=side, price=px, quantity=q, order_type=OrderType.LIMIT))
+                    self.orders[self.pexit_id] = [sg, px, q]
+                return
+            if self.pexit_id is not None and self.pexit_id not in self.cancel_sent:
+                self._cancel(self.pexit_id)
         if inv > 0:
             target = math.floor(self.snipe_s - self.UNWIND_GAP)
             if late or bb >= target:
@@ -702,5 +719,7 @@ class R4mDevStrategy(BaseStrategy):
             self.snipe_id = None
         if oid == self.unwind_id:
             self.unwind_id = None
+        if oid == self.pexit_id:
+            self.pexit_id = None
         self.orders.pop(oid, None)
         self.cancel_sent.discard(oid)

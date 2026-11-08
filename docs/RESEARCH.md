@@ -1090,3 +1090,21 @@ ticks·lots), also out of distribution on round 2. In the simulator (`r3_ks_mlta
 per-lot markout label ignores that extra takes use up the ±100 room and displace passive fills. Any ML here needs the
 marginal PnL with inventory as its label, which is what backtest sweeps already measure. The HGB storm gate
 (`r3_ks_hgb.py`) lost 15–50% for a related reason: it predicts that a big move is coming, not the millisecond to take.
+
+### Round 4: more tries on top of r4m_risk_a (all rejected, 2026-11-08)
+
+Quarter tapes plus the full tape; `r4m_risk_a` scores 317,269 / 290,067 / 297,272 / 250,387 and 1,156,545 (`r4m_dev.py`
+holds the switches).
+
+- Momentum only past a threshold (MOM_TH 2/4/8 ticks, with K 0.1–0.3): 1,118–1,143k.
+- Momentum split by regime (quiet 0–0.05, storm 0.15–0.2), although storm momentum is about twice as strong: 1,122–1,136k.
+- Slow reversal lean against the 10–40 s move (K_REV / V_K_REV 0.02–0.1): −2% to −47%, worst in storm.
+- Sniper re-firing within a jump (cooldown 0.1 / 0.25 s): identical (the stale side is gone after the first sweep);
+  with IDG_DEPTH 20: −32k.
+- Passive exit of the excess at S_new −2 / 0 / +2 for the post-jump IOC surge: within ±6k (too few excess lots).
+- Trigger and constant nudges with the sniper on (SNIPE_FAR 12/20, CONFIRM_N 3, IDG_WINDOW 40 ms, SNIPE_POS 600,
+  EDGE_TAKE 0.3, V_EDGE_TAKE 0.5/0.65, V_QTY 300, QTY 200, K_FLOW 1.2, V_K_FLOW 0.9, P_ON 0.25/0.35, K_INV 0.001,
+  V_SWEEP, Q_SWEEP): all equal or lower.
+- Reactive leverage bound on round 4 (`scripts/lever_oracle.py`, entry after the mid moved X ticks in 20 ms): the
+  expected net per excursion is negative for every X, hold and Q (Q 900: −6k to −29k), as on round 3. Momentum does
+  not rescue chasing; only the id-gap trigger enters early enough.

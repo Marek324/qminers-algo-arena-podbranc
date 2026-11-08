@@ -84,6 +84,8 @@ def main() -> None:
     ap.add_argument('--params', default='round3_public')
     ap.add_argument('--seed', type=int, default=1)
     ap.add_argument('-j', type=int, default=7)
+    ap.add_argument('--cfgs', default='', help='comma-separated config indices to run here (split across machines)')
+    ap.add_argument('--merge', type=Path, nargs='*', default=None, help='results.csv files to merge and report on, no runs')
     a = ap.parse_args()
 
     anchs = anchors(a.anchors)
@@ -102,6 +104,11 @@ def main() -> None:
     }
     combos = [dict(zip(grid, v, strict=True)) for v in itertools.product(*grid.values())]
     OUT.mkdir(parents=True, exist_ok=True)
+    if a.merge is not None:
+        R = pd.concat([pd.read_csv(f) for f in a.merge], ignore_index=True).drop_duplicates(['cfg', 'anchor'])
+        report(R, combos, anchs)
+        return
+    todo = [int(x) for x in a.cfgs.split(',')] if a.cfgs else list(range(len(combos)))
 
     def build(i_c):
         i, c = i_c
@@ -115,17 +122,22 @@ def main() -> None:
         return tape
 
     with ThreadPoolExecutor(max(1, a.j // 3)) as ex:
-        tapes = list(ex.map(build, enumerate(combos)))
-    jobs = [(i, an) for i in range(len(combos)) for an in anchs]
+        tapes = dict(zip(todo, ex.map(build, [(i, combos[i]) for i in todo]), strict=True))
+    jobs = [(i, an) for i in todo for an in anchs]
     with ThreadPoolExecutor(a.j) as ex:
         list(ex.map(lambda j: backtest(j[1] / 'strategy.py', tapes[j[0]], OUT / f'run_{j[0]}' / j[1].name), jobs))
 
     rows = []
-    for i, c in enumerate(combos):
+    for i in todo:
         for an in anchs:
-            rows.append({'cfg': i, **c, 'anchor': an.name, **score(an, OUT / f'run_{i}' / an.name)})
+            rows.append({'cfg': i, **combos[i], 'anchor': an.name, **score(an, OUT / f'run_{i}' / an.name)})
     R = pd.DataFrame(rows)
-    R.to_csv(OUT / 'results.csv', index=False)
+    tag = ('_' + a.cfgs.replace(',', '-')) if a.cfgs else ''
+    R.to_csv(OUT / f'results{tag}.csv', index=False)
+    report(R, combos, anchs)
+
+
+def report(R: pd.DataFrame, combos: list, anchs: list[Path]) -> None:
     tot = R.groupby('cfg').loss.sum().sort_values()
     best = int(tot.index[0])
     print('\nbest configs (total loss over all anchors):')

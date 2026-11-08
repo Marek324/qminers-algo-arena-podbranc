@@ -1147,3 +1147,24 @@ Every extra trigger adds false fires faster than real jumps, and leverage on our
 Kalman filter learns the jump from the same late orders). With the information the feed gives, the id-gap trigger is
 the only one early enough; the remaining 95% of the ceiling needs knowing a jump before it happens, and calm
 stretches are memoryless (DATA_ANALYSIS.md).
+
+### Round 4: combined jump predictor (rejected, 2026-11-08)
+
+`scripts/jump_feats.py` records 16 detector features every 5 ms (id gaps, clamped and visible new orders per side,
+signed far orders, multi-level sweeps, spread and its jump, per-side depth against its EMA, p_vol, Kalman variance,
+S_hat − mid and its last change, jump votes). `scripts/jump_eval.py` fits a regularised logistic (C 0.05, mirrored
+up/down) for "mid moves ≥ L ticks in the next 300 ms" on one half of round4_public and scores the other half by tradable
+value per fire: direction × (mid 300 ms later − mid when the order lands) − half spread, one fire per second at most.
+
+| L = 20 | fires | value (ticks/lot, summed) | fires worth > 5 ticks |
+|---|---|---|---|
+| IdGapJump rule, test H1 | 7 | **+441** | 6 |
+| ensemble, test H1, 4 thresholds | 8–29 | −212 to −368 | 0–4 |
+| rule OR ensemble, test H1 | 13 | +318 | 7 |
+| IdGapJump rule, test H2 | 0 | 0 | 0 |
+| ensemble, test H2 | 2–18 | −15 to −66 | 1–2 |
+
+L = 10 gives the same picture. The model's weight goes to p_vol and the spread: it learns that big moves happen in
+storms, not when, so it fires during storms after the move has started and loses the spread. The weak signals carry
+no timing information beyond the id-gap rule. Also note that the rule fired only in the first half of the tape, which
+matches the sniper's per-quarter gain (+30k / +23k / +2k / 0).

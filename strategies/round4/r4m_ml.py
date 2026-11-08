@@ -207,6 +207,12 @@ class R4mMlStrategy(BaseStrategy):
     JUMP_CANCEL = 0      # 1: on id-gap fires (weak and strong)
     FAR_CANCEL = 0       # >0: also on a single new order this far behind the opposite best
     JC_HOLD_US = 50_000
+    # pre-storm lean (from r4m_aggr): fair += K_PRE * sign(market IOC net volume over PRE_US) while PRE_LO <= p_vol < P_ON
+    PRE_LO = 0.1
+    K_PRE = 0.0
+    PRE_US = 2_000_000
+    # quiet quote hysteresis (Jaro): a new quote needs EDGE_NEW, resting ones stay until below EDGE (0: off)
+    EDGE_NEW = 0.0
     K_MOM = 0.1
     V_K_MOM = 0.1
     MOM_US = 500_000
@@ -346,6 +352,8 @@ class R4mMlStrategy(BaseStrategy):
         self.ofi = 0.0
         self.mlofi = 0.0
         self.in_storm = False
+        self.pre_q: deque = deque()
+        self.pre_net = 0.0
         self.storm_t = 0
         self.pj_sign = 0
         self.pj_t = -10**12
@@ -427,6 +435,18 @@ class R4mMlStrategy(BaseStrategy):
                 if self.H_IOC and tr.taker_order_id != self.last_taker:
                     self.last_taker = tr.taker_order_id
                     self._observe_ioc(now)
+        if self.K_PRE:
+            seen_ioc = {}
+            for tr in trades:
+                if tr.taker_owner == 'market':
+                    sg = 1 if tr.book_side == 'ask' else -1
+                    seen_ioc[tr.taker_order_id] = seen_ioc.get(tr.taker_order_id, 0) + sg * tr.quantity
+            for v in seen_ioc.values():
+                self.pre_q.append((now, v))
+                self.pre_net += v
+            pq = self.pre_q
+            while pq and now - pq[0][0] > self.PRE_US:
+                self.pre_net -= pq.popleft()[1]
         if idg is not None and now - self.idg_t > self.IDG_WINDOW_US:
             dj = idg.check(now)
             if dj:
@@ -464,33 +484,43 @@ class R4mMlStrategy(BaseStrategy):
         self.in_storm = storm
         if self.pv < self.P_ON:
             fair = mid + self.K_S * (self.s - mid) + self.K_IMB * imb + self.K_FLOW * fx - self.K_INV * self.inv + self.K_MOM * mom + self.K_OFI * ofi + self.K_DIMB * dimb + ml_q
+            if self.K_PRE and self.pv >= self.PRE_LO:
+                fair += self.K_PRE * (1 if self.pre_net > 0 else (-1 if self.pre_net < 0 else 0))
             if fair - ba >= self.EDGE_TAKE:
-                pb = math.floor(fair - self.EDGE_TAKE) if self.Q_SWEEP else ba
+                pb = nb = math.floor(fair - self.EDGE_TAKE) if self.Q_SWEEP else ba
             elif ba - bb >= 2 and fair - (bb + 1) >= self.EDGE_IN:
-                pb = bb + 1
+                pb = nb = bb + 1
             else:
                 pb = bb
                 while fair - pb < self.EDGE:
                     pb -= 1
+                nb = pb
+                if self.EDGE_NEW:
+                    while fair - nb < self.EDGE_NEW:
+                        nb -= 1
             if bb - fair >= self.EDGE_TAKE:
-                pa = math.ceil(fair + self.EDGE_TAKE) if self.Q_SWEEP else bb
+                pa = na = math.ceil(fair + self.EDGE_TAKE) if self.Q_SWEEP else bb
             elif ba - bb >= 2 and (ba - 1) - fair >= self.EDGE_IN:
-                pa = ba - 1
+                pa = na = ba - 1
             else:
                 pa = ba
                 while pa - fair < self.EDGE:
                     pa += 1
+                na = pa
+                if self.EDGE_NEW:
+                    while na - fair < self.EDGE_NEW:
+                        na += 1
             qp = self.Q_PASSIVE
             if now < self.block[1] and pb < ba:
                 self._clear(1)
             elif qp == 0 or pb >= ba or (qp == 1 and self.inv < 0):
-                self._side(1, pb)
+                self._side(1, pb, 0, nb)
             else:
                 self._clear(1)
             if now < self.block[-1] and pa > bb:
                 self._clear(-1)
             elif qp == 0 or pa <= bb or (qp == 1 and self.inv > 0):
-                self._side(-1, pa)
+                self._side(-1, pa, 0, na)
             else:
                 self._clear(-1)
             return
@@ -833,8 +863,10 @@ class R4mMlStrategy(BaseStrategy):
             if o[0] == sign:
                 self._cancel(oid)
 
-    def _side(self, sign: int, target: int, qty: int = 0) -> None:
+    def _side(self, sign: int, target: int, qty: int = 0, new_target: int = 0) -> None:
         qty = qty or self.QTY
+        if not new_target:
+            new_target = target
         resting = 0
         at_target = 0
         keep = []
@@ -849,7 +881,7 @@ class R4mMlStrategy(BaseStrategy):
                 resting += o[2]
                 continue
             resting += o[2]
-            if behind == 0:
+            if behind == 0 or o[1] == new_target:
                 at_target += o[2]
             else:
                 keep.append((behind, oid, o[2]))
@@ -865,8 +897,8 @@ class R4mMlStrategy(BaseStrategy):
         if q < self.MIN_NEW:
             return
         side = Side.BUY if sign > 0 else Side.SELL
-        oid = self.send_order(OrderRequest(side=side, price=target, quantity=q, order_type=OrderType.LIMIT))
-        self.orders[oid] = [sign, target, q]
+        oid = self.send_order(OrderRequest(side=side, price=new_target, quantity=q, order_type=OrderType.LIMIT))
+        self.orders[oid] = [sign, new_target, q]
 
     def on_private_order_update(self, event: PrivateOrderEvent) -> None:
         oid = event.order_id

@@ -90,7 +90,7 @@ def main() -> None:
     ok = ~np.isnan(mid) & (t > 1)
 
     print(f"hold={hold} entry={entry:.2f} samples={ok.sum()}")
-    for name, real in (("best bid", bid), ("mid", mid)):
+    for name, real in (("best bid", bid), ("best ask", ask), ("mid", mid)):
         e = rebuilt[ok] - real[ok]
         print(f"vs {name:8s}: mean err {e.mean():+.3f}  rmse {np.sqrt((e**2).mean()):.3f}  "
               f"max |err| {np.abs(e).max():.1f}  corr {np.corrcoef(rebuilt[ok], real[ok])[0, 1]:.6f}")

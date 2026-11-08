@@ -10,6 +10,7 @@ round's rates, sizes, X and impact.
 """
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -29,6 +30,25 @@ def path_from_pnl(pnl_csv: Path, hold: float, entry: float, half: float) -> tupl
     s[t < 1.0] = s[np.argmax(t >= 1.0)]  # before the entry fill PnL is 0
     keep = np.r_[True, np.diff(t) > 1e-6]
     return t[keep], s[keep]
+
+
+def probe_price(log_dir: Path) -> tuple[np.ndarray, np.ndarray]:
+    """Price held by a probe run (pnl.csv + result.json): pnl / inventory - cash / inventory (bid if long, ask if short)."""
+    r = json.loads((log_dir / "result.json").read_text())
+    df = pd.read_csv(log_dir / "pnl.csv")
+    t = df.elapsed_s.to_numpy()
+    p = (df.pnl.to_numpy() - r["cash"]) / r["inventory"]
+    p[t < 1.0] = p[np.argmax(t >= 1.0)]
+    keep = np.r_[True, np.diff(t) > 1e-6]
+    return t[keep], p[keep]
+
+
+def mid_from_probes(long_dir: Path, short_dir: Path) -> tuple[np.ndarray, np.ndarray]:
+    tb, bid = probe_price(long_dir)
+    ta, ask = probe_price(short_dir)
+    ask = np.interp(tb, ta, ask)
+    ask = np.maximum(ask, bid + 1)  # sampling mismatch: the book never crosses
+    return tb, (bid + ask) / 2
 
 
 def regimes_from_path(t: np.ndarray, s: np.ndarray, p: GenParams, jump_ticks: float):
@@ -57,10 +77,15 @@ def main() -> None:
     ap.add_argument("--half", type=float, default=0.5)
     ap.add_argument("--jump-ticks", type=float, default=20)
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--short-dir", type=Path, default=None,
+                    help="short probe run dir; then pnl_csv is the long probe run dir and S = mid of the two")
     a = ap.parse_args()
 
     p = GenParams.load(PARAM_DIR / f"{a.params}_params.json")
-    t, s = path_from_pnl(a.pnl_csv, a.hold, a.entry, a.half)
+    if a.short_dir is not None:
+        t, s = mid_from_probes(a.pnl_csv, a.short_dir)
+    else:
+        t, s = path_from_pnl(a.pnl_csv, a.hold, a.entry, a.half)
     reg = regimes_from_path(t, s, p, a.jump_ticks) if p.storm_dur_s > 0 else None
     if reg is not None:
         print(f"storm share {reg[1].mean():.1%} of {len(reg[1])} windows")

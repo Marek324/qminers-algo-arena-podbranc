@@ -1,0 +1,21 @@
+# fresh pass from hmm_617 on round3_public quarters
+EDGE_IN = 0.3, 0.35, 0.45
+K_FLOW = 0.9, 1.1, 1.2
+QTY = 120, 180
+H_N_V0 = 2.9, 3.5, 4.0
+EDGE = 0.15, 0.25
+V_K_S = 0.7, 0.9
+H_PQV = 0.00002, 0.00005
+SIG_Q = 0.6, 0.7
+H_PVQ = 0.0002, 0.0005
+V_EDGE_TAKE = 0.45, 0.65
+V_K_FLOW = 1.0, 1.4
+SIG_V = 8.0, 13.0
+P_ON = 0.4, 0.6
+EDGE_TAKE = 0.2, 0.3
+K_S = 0.65, 0.85
+K_IMB = 0.1, 0.2
+K_INV = 0.001, 0.003
+FLOW_TAU_US = 80_000, 130_000
+C_LR = 0.0003, 0.001
+KF_LEVELS = 3, 6

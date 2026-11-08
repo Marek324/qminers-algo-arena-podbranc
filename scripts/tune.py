@@ -40,6 +40,7 @@ def main() -> None:
     ap.add_argument('--min-gain', type=float, default=0.01)
     ap.add_argument('--min-wins', type=int, default=3)
     ap.add_argument('--passes', type=int, default=3)
+    ap.add_argument('--groups', default='', help='chunk counts per tape group, e.g. 4,4: no group total may fall')
     args = ap.parse_args()
 
     grid = []
@@ -58,8 +59,13 @@ def main() -> None:
         path = tmp / f's{k}.py'
         path.write_text(src)
         out = tmp / f'o{k}'
-        subprocess.run(['.venv/bin/exchange-simulator', '--strategy', str(path), '--backtest', str(tape),
-                        '--log-dir', str(out), '--no-logs'], check=True, capture_output=True)
+        for attempt in range(3):  # a run killed from outside (another session's cleanup) is retried
+            done = subprocess.run(['.venv/bin/exchange-simulator', '--strategy', str(path), '--backtest', str(tape),
+                                   '--log-dir', str(out), '--no-logs'], capture_output=True)
+            if done.returncode == 0:
+                break
+        else:
+            raise RuntimeError(f'backtest failed 3 times: {path} {tape}: {done.stderr[-500:]!r}')
         r = json.loads((out / 'result.json').read_text())
         return r['pnl'] - r['breach_penalty'] * 0  # pnl already includes the penalty
 
@@ -73,8 +79,15 @@ def main() -> None:
                 cache[s] = [next(it) for _ in args.tapes]
         return [cache[s] for s in srcs]
 
+    sizes = [int(x) for x in args.groups.split(',')] if args.groups else [len(args.tapes)]
+    bounds = [sum(sizes[:i]) for i in range(len(sizes) + 1)]
+
+    def group_sums(r):
+        return [sum(r[bounds[i]:bounds[i + 1]]) for i in range(len(sizes))]
+
     base = evaluate([text])[0]
-    print(f'base {sum(base):,.0f}  chunks {[round(x) for x in base]}', flush=True)
+    print(f'base {sum(base):,.0f}  groups {[round(x) for x in group_sums(base)]}  chunks {[round(x) for x in base]}',
+          flush=True)
     for p in range(args.passes):
         changed = False
         for name, vals in grid:
@@ -85,9 +98,11 @@ def main() -> None:
             best = None
             for v, s, r in zip(cands, srcs, res):
                 wins = sum(a > b for a, b in zip(r, base))
-                ok = sum(r) >= sum(base) * (1 + args.min_gain) and wins >= args.min_wins
+                gs, gb = group_sums(r), group_sums(base)
+                ok = (sum(r) >= sum(base) * (1 + args.min_gain) and wins >= args.min_wins
+                      and all(a >= b for a, b in zip(gs, gb)))
                 print(f'  {name}={v:<12} total {sum(r):>10,.0f} ({sum(r) - sum(base):+,.0f})  wins {wins}/{len(r)}'
-                      f'{"  ok" if ok else ""}', flush=True)
+                      f'  groups {[round(x - y) for x, y in zip(gs, gb)]}{"  ok" if ok else ""}', flush=True)
                 if ok and (best is None or sum(r) > sum(best[2])):
                     best = (v, s, r)
             if best:

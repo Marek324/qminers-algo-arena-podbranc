@@ -1,0 +1,10 @@
+# hmm_plus_r3 switches on round3_public quarters
+V_RECYCLE = 0.0, 0.5, 1.0, 2.0
+OVER_POS = 200, 400, 1000
+OVER_EDGE = 3.0, 8.0, 12.0
+MAX_OVER_US = 300_000, 3_000_000
+CALM_SWEEP = 1.0, 2.0
+EDGE_PV = 0.2, 0.5
+FAR_TRIGGER = 10, 20
+SWEEP_BOUND = True
+ALPHA_PULL = 1.0, 2.0

@@ -1,0 +1,22 @@
+# hmm_mm tuning on round3_public quarters + r3_eval_twin quarters (current value always kept)
+V_K_FLOW = 0.8, 1.6
+P_ON = 0.3, 0.7
+C_LR = 0.0002, 0.002
+V_EDGE_TAKE = 0.4, 0.75
+V_K_S = 0.8, 1.2
+V_K_INV = 0.002
+SIG_V = 6.0, 15.0
+SIG_Q = 0.3, 0.8
+H_PQV = 0.00003, 0.0003
+H_PVQ = 0.0001, 0.001
+R_MIN = 0.05, 0.2
+EDGE = 0.2, 0.4
+EDGE_TAKE = 0.15, 0.4
+EDGE_IN = 0.3, 1.0
+K_S = 0.5, 1.0
+K_FLOW = 0.5, 1.2
+K_IMB = 0.0, 0.3
+K_INV = 0.0, 0.005
+QTY = 100, 400
+KEEP_LEVELS = 0, 2
+FLOW_TAU_US = 50_000, 200_000

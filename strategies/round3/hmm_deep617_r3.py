@@ -65,7 +65,7 @@ class HmmDeep617R3Strategy(BaseStrategy):
     KEEP_LEVELS = 1
     # quiet regime (round 1 market maker settings)
     EDGE = 0.2  
-    EDGE_IN = 0.4  
+    EDGE_IN = 0.3  
     EDGE_TAKE = 0.25
     K_IMB = 0.15
     K_INV = 0.002
@@ -85,13 +85,13 @@ class HmmDeep617R3Strategy(BaseStrategy):
     H_PQV = 0.00003  # per new order: P(quiet -> volatile)
     H_PVQ = 0.0003       # P(volatile -> quiet)
     H_LR = 0.0003        # soft-EM weight of each order in the state means
-    H_NMAX = 20
+    H_NMAX = 4
     H_IOC = False         # also feed the gaps between market IOCs to the HMM (exponential, rate learned per state)
     H_IOC_RQ0 = 8.0      # start IOC rate (per s) in the quiet state
     H_IOC_RV0 = 13.0     # and in the volatile state
     H_IOC_LR = 0.003
     # Kalman filter for S
-    SIG_Q = 0.5          # ticks / sqrt(s) in the quiet state
+    SIG_Q = 0.6          # ticks / sqrt(s) in the quiet state
     SIG_V = 10.0          # in the volatile state
     KF_LEVELS = 3  # quiet: use new orders up to this many ticks behind their best price
     KF_LEVELS_V = 3  # volatile: same

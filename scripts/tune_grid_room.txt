@@ -1,0 +1,4 @@
+# room allocation on hmm_617_fit (round3_public quarters)
+Q_MAX_POS = 40, 60, 80, 90
+P_FLAT = 0.05, 0.15, 0.3
+K_INV_FLAT = 0.005, 0.01, 0.02

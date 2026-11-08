@@ -93,9 +93,10 @@ def main(path: str, far: int = 6, cap: int = 200) -> None:
             o = orders.pop(oid[i], None)
             if o is not None and o[2] > 0:
                 book = bids if o[0] == 'B' else asks
-                book[o[1]] -= o[2]
-                if book[o[1]] <= 0:
-                    del book[o[1]]
+                if o[1] in book:  # the simplified replay can already have emptied this level
+                    book[o[1]] -= o[2]
+                    if book[o[1]] <= 0:
+                        del book[o[1]]
         bb, ba = best(bids, True), best(asks, False)
         if bb is not None and ba is not None:
             mids_t.append(now)

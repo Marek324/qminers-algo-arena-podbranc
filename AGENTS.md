@@ -4,7 +4,7 @@ Qminers Algo Trade Arena hackathon. Our job is to write a **trading strategy**. 
 
 ## What you may change
 
-- `strategies/`: new strategy files. Copy `strategies/template_strategy.py` into a new file and work there. Strategies are sorted by the round they were built for: `strategies/round1/`, `strategies/round2/`, and `strategies/roundN/` for each new round. Put new work in the current round's folder. The top level holds only the two reference files. Oracles (`oracle_overfit_round1`, `dumb`) and probes (`simple_probe_mm`, `probe_*`) live in their round's folder too; never submit them. File names stay unique across folders, because the dashboard lists them by name. When you move a strategy, update the paths that reference it.
+- `strategies/`: new strategy files. Copy `strategies/template_strategy.py` into a new file and work there. Strategies are sorted by the round they were built for: `strategies/round1/`, `strategies/round2/`, and `strategies/roundN/` for each new round. Put new work in the current round's folder. The top level holds only the two reference files. Oracles (`oracle_overfit_round1`, `oracle_lever_b2_*`, `dumb`) and probes (`simple_probe_mm`, `probe_*`) live in their round's folder too; never submit them. File names stay unique across folders, because the dashboard lists them by name. When you move a strategy, update the paths that reference it.
 - `tools/`: reusable building blocks (regressions, estimators, ...) that get **copied** into strategy files. See [Tools](#tools).
 - `docs/`, `AGENTS.md`, and helper scripts for analysis or parameter sweeps (e.g. `scripts/`, notebooks). These never get submitted.
 - `experiments/`: inactive experiments preserved for later, with their analysis, strategies, helpers and result summaries kept together. `experiments/inventory/` is the archived inventory-penalty/endgame study: its results are historical round-1 evidence, not active recommendations; re-run it on the new dataset before reconsidering it.
@@ -40,6 +40,7 @@ Current tools:
 - `tools/id_gap_jump.py`: `IdGapJump` (jump detector from missing market order ids plus orders clamped inside the stale touch; fires 5-25 ms into a jump).
 - `tools/flow_reversion.py`: `FlowReversion` (online regression of the next ~5 s mid move on slow signed taker flow; uses the slope only when it shows mean reversion).
 - `tools/take_gate.py`: `TakeGate` (taker edge threshold raised by filter inconsistency, i.e. the EWMA of innovation z², and by reversing a recent take; optional edge-sized take caps).
+- `tools/breach_gate.py`: `BreachGate` (should we go over |I| = 100? Paper-trades each leveraged excursion on the live book and allows a signal bucket only when its mean net after the 10k $/s penalty is significantly positive).
 
 ## No tests
 
@@ -72,6 +73,7 @@ uv run backtest-explorer --log-dir logs/<run>    # needs a full-logs run
 ```
 
 - Analyze a tape before writing a strategy: `uv run analysis.py data/<file>.csv` writes `logs/analysis/<file>.json` and `.txt`. Report contents and schema: [docs/ANALYSIS.md](docs/ANALYSIS.md).
+- Before trying leverage over |I| = 100, read [docs/LEVERAGE.md](docs/LEVERAGE.md): a hindsight bound, the real-simulator oracle and why the expected value is negative on round 3.
 - Check a strategy for overfitting before trusting its score: `uv run python scripts/robustness.py strategies/<mine>.py` runs it on every tape in data/, over time chunks, on a mirrored market and reshuffled sessions (`--sensitivity all` adds parameter nudges); the dashboard's Robustness tab shows the report.
 - Measure a strategy against a known generator: `.venv/bin/python scripts/gen_tape.py --seed 1` writes a `round1` twin to `data/synthetic/` (deterministic per seed) plus its true hidden price S (`_S.npz`). The tapes are git-ignored: regenerate the three used in the docs with `scripts/gen_tape.py --seed 1 2 3` (about 150 MB each); `analysis.py` on it gives the hindsight max, and `scripts/oracle_s_mm.py` / `scripts/sweep_oracle.py` run a true-S oracle. Fit and results: [docs/DATA_ANALYSIS.md](docs/DATA_ANALYSIS.md#synthetic-twin-of-round1).
 - The score is `pnl` in `logs/<run>/result.json`. Also check `breach_penalty` (should be 0) and the `abs_inventory_q*` quantiles.

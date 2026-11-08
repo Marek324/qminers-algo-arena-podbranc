@@ -15,3 +15,5 @@ logs/*
 # Private analysis findings (fitted generator values), never commit
 findings/
 # Synthetic tapes (data/synthetic/) stay ignored by data/*: regenerate them, e.g. scripts/gen_tape.py --seed 1 2 3
+barbora/runs/
+barbora/wheels/

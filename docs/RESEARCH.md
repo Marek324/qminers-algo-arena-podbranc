@@ -1108,3 +1108,20 @@ holds the switches).
 - Reactive leverage bound on round 4 (`scripts/lever_oracle.py`, entry after the mid moved X ticks in 20 ms): the
   expected net per excursion is negative for every X, hold and Q (Q 900: −6k to −29k), as on round 3. Momentum does
   not rescue chasing; only the id-gap trigger enters early enough.
+
+### Round 4: other families and a learned fair value (2026-11-08)
+
+**Family screen** (19 existing strategies unchanged on round4_public): `r4m_risk_a` 1,156,545; HMM-skeleton variants
+`conf_sniper` 996,610, `round3_strategy` 995,944, `r3_tp_mm` 952,786; **`alpha_as_mm` 943,575** (A-S market maker around an
+online RLS fair value, the only competitive non-HMM design); `regime_mm_kf` 809,577; `ladder_mm` 770,170; `jump_mm`
+526,403; `r3_lever_mm` 363,527 (penalty 277k); `sband_mm` 60,480; `trend_follower` −12; `lab_kimi_sniper` −29,778;
+`lab_kimi_valuemm` −235,315; `lag_taker` −245,795; `adaptive_mm` −482,394; `imbalance_mm` −750,599; `queue_mm`
+−846,641; `storm_mm` −1,713,582; `flow_momentum` −2,805,804; `penalty_mm` −6,273,220. Quoting without a hidden-price
+estimate is run over by the momentum-driven IOCs, following momentum directly pays the spread on every trade, and
+taking without making loses the passive turnover.
+
+**Learned fair value on the skeleton** (`strategies/round4/r4m_rls.py`): `r4m_risk_a` plus an RLS per regime of the mid
+move 0.5 s ahead on [1, S_hat − mid, imbalance, flow, 0.5 s momentum], fair blended toward mid + prediction by K_RLS.
+Full tape: K_RLS 0.2 / 0.3 / 0.5 / 1.0 give 1,132,967 / 1,126,783 / 1,135,216 / 1,102,282; quiet-only 0.5 1,153,562;
+storm-only 0.5 1,135,448; 1 s horizon 1,160,549 (+4k; quarters +16k / −2k / −5k / −3k, noise). The fixed-weight fair
+already holds what an online linear model learns from these features, as on round 3.

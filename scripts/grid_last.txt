@@ -1,0 +1,13 @@
+base:
+kimb01: K_IMB=0.1
+kimb02: K_IMB=0.2
+ein025: EDGE_IN=0.25
+ein04: EDGE_IN=0.4
+idgd15: IDG_DEPTH=15
+vqty150: V_QTY=150
+sfar12: SNIPE_FAR=12
+sfar20: SNIPE_FAR=20
+jth8: JUMP_TH=8.0
+kinv0015: K_INV=0.0015
+kinv0025: K_INV=0.0025
+qty180: QTY=180

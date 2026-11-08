@@ -1,0 +1,13 @@
+# group C: hidden-price filter / HMM (jk_base_r4 = hmm_deep_clear_r3)
+SIG_Q = 0.45, 0.5, 0.7, 0.8
+H_PQV = 0.00001, 0.00002, 0.00005
+H_PVQ = 0.0001, 0.0002, 0.0005
+H_LR = 0.0001, 0.001
+H_NMAX = 3, 5
+KF_LEVELS = 2, 4
+KF_LEVELS_V = 2, 4
+DEEP_R = 1.0, 1.5, 3.0, 4.0
+JUMP_TH = 4.0, 5.0, 8.0
+JUMP_N = 2, 4
+JUMP_P = 10.0, 50.0
+C_LR = 0.0002, 0.001

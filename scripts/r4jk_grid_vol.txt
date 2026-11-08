@@ -1,0 +1,9 @@
+# group B: volatile policy and regime switch (jk_base_r4 = hmm_deep_clear_r3)
+V_EDGE_TAKE = 0.4, 0.45, 0.65, 0.75
+V_QTY = 150, 250, 300
+V_K_S = 0.6, 0.7, 0.9, 1.0
+V_K_FLOW = 0.9, 1.0, 1.4, 1.6
+V_K_INV = 0.001, 0.002
+P_ON = 0.2, 0.4, 0.5
+SIG_V = 7.0, 8.5, 11.5, 13.0
+H_N_V0 = 2.8, 3.5, 4.0

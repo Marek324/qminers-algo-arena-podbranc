@@ -125,6 +125,10 @@ class R4mMldiV2Strategy(BaseStrategy):
     QE_REF = 0.0
     QE_MIN = 0.5
     QE_TAKE = 1          # 1: also scale EDGE_TAKE
+    # end of run: in the last END_S seconds before END_T (seconds from the first event; hidden tapes are 12,000 s),
+    # quote only the inventory-reducing side while the market is quiet (the end position is swept through the book)
+    END_T = 0.0
+    END_S = 30.0
     # storm-end hazard: storms are regular (mean 84 s, CV 0.44), so lean against the position as the storm ages
     V_HZ = 0.0           # ticks per lot at full age
     HZ_US = 90_000_000   # age (since p_vol crossed P_ON) at which the lean is full
@@ -284,6 +288,7 @@ class R4mMldiV2Strategy(BaseStrategy):
         self.mlofi = 0.0
         self.in_storm = False
         self.vol2 = 0.0
+        self.t_first = 0
         self.vol_t = 0
         self.vol_mid = 0.0
         self.vol = 0.0
@@ -472,6 +477,10 @@ class R4mMldiV2Strategy(BaseStrategy):
                     while na - fair < q_new:
                         na += 1
             qp = self.PW_QP if (alert and self.PW_QP) else self.Q_PASSIVE
+            if not self.t_first:
+                self.t_first = now
+            if self.END_T and (now - self.t_first) / 1e6 >= self.END_T - self.END_S:
+                qp = 1
             if now < self.block[1] and pb < ba:
                 self._clear(1)
             elif qp == 0 or pb >= ba or (qp == 1 and self.inv < 0):

@@ -107,6 +107,12 @@ class R4mMldiStrategy(BaseStrategy):
     SIGV_MAX = 25.0
     MLDI_VMIN = 0.0      # >0: storm depth-imbalance term only while realized vol >= this (ticks / sqrt s)
     VET_REF = 0.0        # >0: storm take edge scaled by sqrt(realized vol / VET_REF)
+    # storm-onset defence (quiet regime): while P(storm) >= PW_LO or realized vol >= VW_VMIN, widen quiet quotes by
+    # PW_EDGE and/or quote only the inventory-reducing side (PW_QP 1)
+    PW_LO = 0.0
+    VW_VMIN = 0.0
+    PW_EDGE = 0.0
+    PW_QP = 0
     # storm-end hazard: storms are regular (mean 84 s, CV 0.44), so lean against the position as the storm ages
     V_HZ = 0.0           # ticks per lot at full age
     HZ_US = 90_000_000   # age (since p_vol crossed P_ON) at which the lean is full
@@ -417,17 +423,20 @@ class R4mMldiStrategy(BaseStrategy):
             fair = mid + self.K_S * (self.s - mid) + self.K_IMB * imb + self.K_FLOW * fx - self.K_INV * self.inv + self.K_MOM * mom + self.K_OFI * ofi + self.K_DIMB * dimb + ml_q
             if self.K_PRE and self.pv >= self.PRE_LO:
                 fair += self.K_PRE * (1 if self.pre_net > 0 else (-1 if self.pre_net < 0 else 0))
+            alert = (self.PW_LO and self.pv >= self.PW_LO) or (self.VW_VMIN and self.vol >= self.VW_VMIN)
+            q_edge = self.EDGE + (self.PW_EDGE if alert else 0.0)
+            q_new = (self.EDGE_NEW + (self.PW_EDGE if alert else 0.0)) if self.EDGE_NEW else 0.0
             if fair - ba >= self.EDGE_TAKE:
                 pb = nb = math.floor(fair - self.EDGE_TAKE) if self.Q_SWEEP else ba
             elif ba - bb >= 2 and fair - (bb + 1) >= self.EDGE_IN:
                 pb = nb = bb + 1
             else:
                 pb = bb
-                while fair - pb < self.EDGE:
+                while fair - pb < q_edge:
                     pb -= 1
                 nb = pb
-                if self.EDGE_NEW:
-                    while fair - nb < self.EDGE_NEW:
+                if q_new:
+                    while fair - nb < q_new:
                         nb -= 1
             if bb - fair >= self.EDGE_TAKE:
                 pa = na = math.ceil(fair + self.EDGE_TAKE) if self.Q_SWEEP else bb
@@ -435,13 +444,13 @@ class R4mMldiStrategy(BaseStrategy):
                 pa = na = ba - 1
             else:
                 pa = ba
-                while pa - fair < self.EDGE:
+                while pa - fair < q_edge:
                     pa += 1
                 na = pa
-                if self.EDGE_NEW:
-                    while na - fair < self.EDGE_NEW:
+                if q_new:
+                    while na - fair < q_new:
                         na += 1
-            qp = self.Q_PASSIVE
+            qp = self.PW_QP if (alert and self.PW_QP) else self.Q_PASSIVE
             if now < self.block[1] and pb < ba:
                 self._clear(1)
             elif qp == 0 or pb >= ba or (qp == 1 and self.inv < 0):

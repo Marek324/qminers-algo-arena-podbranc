@@ -96,3 +96,94 @@ The findings explain why **`HmmMMStrategy`** achieved **+$1,290,784.00** on this
    Since calm volatility is constant at $\sigma \approx 1.48\text{ ticks}/\sqrt{\text{s}}$, setting jump detection snapping thresholds at $\theta \ge 3.5\sigma \approx 5.2\text{ ticks}$ ensures zero false positive triggers on Poisson spread widening while guaranteeing 100% detection of genuine discontinuities.
 3. **Queue Seniority in Calm Regimes**:
    During the 90%+ of the session spent in calm regimes, continuous Brownian motion yields steady spread capture (+$\$4.13/\text{s}$). Preserving queue priority via order modification (`USE_SHRINK = True`) maximizes fill capture while minimizing cancel churn.
+
+---
+
+## 6. Round 3 Evaluation Tape (probe runs of 2026-11-08)
+
+The round 3 evaluation tape is a new draw: 12,000 s, mid 10,001 → 10,034. Three hold probes were run on the arena
+(`data/probes_r3/`): `simple_probe_mm` (+10 lots → best bid), `probe_short_spread` (−10 lots → best ask) and
+`probe_depth_flow` (+100 lots → 100-lot sweep price). The held price is `(pnl − cash) / inventory`. Read the entry from
+`result.json`: the hard-coded 10,001 / 9,999 are off by up to 0.3 ticks on round 3 (entries 10,001.2 and 9,998.0).
+
+**Probe accuracy**, checked locally on `round3_public` (full book known): bid RMSE 0.26 t, ask RMSE 0.14 t, mid from both
+RMSE 0.15 t with no bias, spread 1.29 vs 1.24 real. Increment distributions at 1/10/60 s are indistinguishable from
+the real mid (KS p ≥ 0.13, 1 s kurtosis 219 vs 213).
+
+**What the probes show** ([`data_visualization/r3_eval_reconstruction.png`](../data_visualization/r3_eval_reconstruction.png),
+`scripts/visualize_eval_r3.py`):
+
+| | round 3 eval |
+|---|---|
+| storm share (30 s windows) | 34.8 % |
+| 1 s jumps ≥ 20 ticks | 47 |
+| mean spread | 1.28 t |
+| 100-lot slippage, calm / storm | 0.057 / 0.177 t |
+| share of seconds with any 100-lot slippage | 17 % |
+
+### Twin (`data/r3_eval_twin.csv.gz`) and its calibration
+
+`scripts/path_twin.py <long> out.csv --short-dir <short> --params <fit>` rebuilds the order flow around the probe mid.
+With the raw `round3_public` fit, hmm_mm scores **0.71×** the arena on the twin (731,771 vs 1,028,431, arena run
+`data/ResultsRun.zip`). Nearly all of the gap is in storms: twin/arena PnL is 1.15 in calm seconds and 0.49 in storm
+seconds.
+
+The same gap exists on the public tape (twin of `round3_public` built from its own probes: 0.72× of the real 568,382),
+so it is a generator mechanism, not missing information from the probes. Calibrating on the public tape, where the
+truth is known, multipliers on the `round3_public` fit:
+
+| multipliers (all: impact_k ×0.33) | public twin / real | eval twin / arena | storm slip public (real 0.187) |
+|---|---|---|---|
+| raw fit (no impact change) | 0.72× | 0.71× | 0.404 |
+| ioc ×1.35 | 0.80× | 0.81× | 0.308 |
+| ioc ×1.35, sigma_storm ×0.6 | 1.05× | 0.89× | 0.237 |
+| ioc ×1.35, sigma_storm ×0.6, ioc_boost ×0.5 | **1.02×** (fills 1.00×) | 0.90× | 0.244 |
+| ioc ×1.35, sigma_storm ×0.5 | 1.05× | 0.92× | 0.306 |
+| ioc ×1.35, limit_rate ×1.25 | – | 0.92× (fills 0.81×) | – |
+
+Findings:
+- The fit's IOC impact is about 3× too strong (60 s impact 1.98 t generated vs 0.65 real) and IOC flow about 25 % too
+  low (trades/s 24.7 vs 34); correcting both brings fills and volume to ~1.0× on both tapes.
+- The fit's storm volatility is too high: real storm moves are cleaner between 1 s samples. Lowering sigma_storm is
+  the single biggest lever.
+- The twin's storm book is too thin (100-lot storm slippage 0.24–0.31 t vs 0.18–0.19 real); a thicker book helps on
+  the eval twin but costs fills.
+- Making more of the path's moves into step jumps (jump threshold 10 t) hurts: 0.70×.
+- Remaining gap: the best public setting gives ~1.0× there but only ~0.90× on the eval twin. The eval tape is longer
+  and stormier, so the 1 s probe resolution (the twin interpolates S between samples) likely costs more there.
+  Treat eval-twin scores as ~10 % pessimistic for hmm_mm-like strategies.
+
+### Calibration grid 3 (`logs/twin_cal3`, 2026-11-08) and the current eval twin
+
+Grid around the table above (`scripts/twin_calibrate.py data/validation_round3 --params round3_public`, split with
+`--cfgs` over both servers): impact_k ×0.2 / ×0.33, sigma_storm ×0.5 / ×0.6 / ×0.8, IOC rate ×1.35 / ×1.6. Anchors:
+the three hold probes, hmm_mm (`a38b1737`, 1,028,431) and three small losing submissions (`d36862ac`, `37b6156d`,
+`156df7c6`). Mean loss per config, best first:
+
+| cfg | impact_k | sigma_storm | IOC rate | mean loss | hmm_mm twin / arena |
+|---|---|---|---|---|---|
+| **9** | ×0.33 | ×0.6 | ×1.6 | **0.720** | 0.99× |
+| 7 | ×0.33 | ×0.5 | ×1.6 | 0.721 | 1.04× |
+| 3 | ×0.2 | ×0.6 | ×1.6 | 0.758 | 1.06× |
+| 1 | ×0.2 | ×0.5 | ×1.6 | 0.799 | 1.04× |
+| 10 | ×0.33 | ×0.8 | ×1.35 | 1.005 | 0.87× |
+
+IOC ×1.6 wins in every pair; with it hmm_mm lands at ~1.0× (vs 0.90× for the best setting of the table above).
+**The working eval twin is cfg 9**: `logs/twin_cal3/twin_9.csv`, copied to `data/r3_twin9.csv` on both compute
+servers (git-ignored, 172 MB; regenerate with the cfg 9 multipliers if missing).
+
+**Limitations — read before tuning on it:**
+- **Only hmm_mm-like market makers are calibrated.** The three small losing anchors are off by 0.2×–1.6× in PnL with
+  60 s correlation −0.3 to +0.6 in every config. Taker-heavy, small-size or losing strategies are not reproduced.
+- **Sub-second price moves are synthetic.** The path comes from 1 s probe samples; S is interpolated between them and
+  the generator places the far orders that announce a jump. Millisecond jump strategies (`r3_sniper_mm`, `r3_fire`,
+  any overshoot/leverage logic) see generated jump precursors, not the real ones: a gain on the twin is not evidence
+  of a gain on the arena. Use `round3_public` (real tape) as the judge for those; the twin only checks they don't
+  blow up on a longer, stormier tape.
+- **One seed, one anchor that matters.** The fit hinges on a single hmm_mm run (SE ~43k); a ±5 % ratio is within
+  noise. The leave-one-out check from the script header was not done for this grid.
+- **No new anchors yet.** The tuned final submission (`data/validation_round3/0138_907826f2`, 1,076,934) is
+  downloaded but not in the grid; adding it is the cheapest way to test the twin out of sample (hmm_mm-tuned should
+  come out ~1.05× of hmm_mm on the twin if it ranks correctly).
+- Treat twin PnL as a ranking tool for parameter changes of the hmm_mm family, accepting a change only if it also
+  holds on `round3_public`.

@@ -1190,3 +1190,26 @@ on the arena validation tape: `r4m_risk_a` 1,965,048.04 (penalty 12,138), Jaro's
 cost his file 4–23k, a quiet momentum lean or the far-order trigger add 1–2k (noise); his short storm fade (fair against
 the 2–3 s move, 0.02–0.1) costs ours 5–74% (his works only next to his 1 s EMA momentum term, as a band-pass). Without his
 quote hysteresis / 3 s fade his file loses 4k / 17k.
+
+### Round 4: component alternatives on r4m_risk_a (2026-11-08)
+
+`strategies/round4/r4m_comp.py` (r4m_risk_a plus Jaro's quote hysteresis switch), quarters and full tape (base 1,156,545):
+
+- **Quote hysteresis** (new quiet quotes need EDGE_NEW, resting ones stay until below EDGE): 0.25 / 0.25 with EDGE 0.1 /
+  0.3 with EDGE 0.15 / 0.35 → 1,157k / 1,160k / 1,160k / 1,160k. EDGE_NEW 0.3, EDGE 0.15 is up in all 4 quarters, but
+  only by 0.5–1.4k each (+0.3%).
+- **Regime detector:** IOC gaps as a second observation (H_IOC) 1,149k; H_LR 0.001 1,167k (quarters +21.5k / −1.3k /
+  +1.0k / −9.6k, inconsistent); H_NMAX 3 1,115k.
+- **Hidden-price filter:** deep readings off / DEEP_R 1.5 / 6 → 1,150k / 1,152k / 1,150k; jump boost JUMP_TH 4 / 10,
+  JUMP_N 2, JUMP_P 50, off → 1,143k / 1,157k / 1,142k / 1,156k / 1,157k; KF_LEVELS 1 / 3 → 1,151k / 1,157k;
+  KF_LEVELS_V 2 / 5 → 1,154k / 1,107k; C_LR 0.002 1,154k; R_MIN 0.3 1,147k; id-gap variance boost (IDG_P 25) no change.
+- **Flow check off:** 1,157k (no change). **Order manager:** KEEP_LEVELS 0 / 2 → 1,149k / 1,156k; MIN_NEW 30 1,135k.
+
+**A third base with the same sniper:** `strategies/round4/r4m_imm_snipe.py` = Jakub's `hmm_imm_b2` (IMM hidden-price
+filter) plus the r4m_risk_a sniper and momentum lean. Plain port reproduces b2 (1,039,171); with the id-gap sniper
+1,131,139, plus the far-order trigger 1,087,322 → with everything 1,143,398 (quarters 321k / 285k / 298k / 238k).
+The sniper adds about +56k and momentum +34k on this base too.
+
+Three independent bases (our deep_clear-based r4m_risk_a, Jaro's r4_best_snipe, Jakub's IMM base) all land at
+1.14–1.16M on round4_public with the same sniper: the design family is at its ceiling with the information the feed
+gives. GitHub has no other team's code for this arena (only QminersOrg/qminers-algo-arena itself, one commit, no forks).

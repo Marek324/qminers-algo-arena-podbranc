@@ -1,0 +1,8 @@
+base:
+qe15: QE_REF=1.5
+qe2: QE_REF=2.0
+qe3: QE_REF=3.0
+qe2_m07: QE_REF=2.0, QE_MIN=0.7
+qe2_m03: QE_REF=2.0, QE_MIN=0.3
+qe2_notake: QE_REF=2.0, QE_TAKE=0
+qe3_notake: QE_REF=3.0, QE_TAKE=0

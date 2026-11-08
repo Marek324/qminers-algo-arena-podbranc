@@ -1,4 +1,4 @@
-"""r4m_mldi_v2: r4m_mldi r4m_risk_a + weak 2-id jump tier inside the cap + storm distance-weighted depth imbalance (V_K_MLDI 0.6,
+"""r4m_mldi_v2: r4m_risk_a + weak 2-id jump tier inside the cap + storm distance-weighted depth imbalance (V_K_MLDI 0.6,
 lambda 2 ticks) + Jaro's quiet quote hysteresis (EDGE_NEW 0.3, EDGE 0.15) + quiet quote size by the vol forecast
 (QTY * clamp(1.5 / vol, 0.5, 1.5)). round4_public 1,214,033; quarters 350,159 / 314,189 / 296,130 / 247,786
 (r4m_risk_a 1,156,545; 317,269 / 290,067 / 297,272 / 250,387). Long shot: the depth term pays in the heavier-storm
@@ -121,6 +121,10 @@ class R4mMldiV2Strategy(BaseStrategy):
     QV_MIN = 0.5
     QV_MAX = 1.5
     KI_REF = 0.0
+    # calm aggression: quiet quote edge and take edge times clamp(vol / QE_REF, QE_MIN, 1) (0: off)
+    QE_REF = 0.0
+    QE_MIN = 0.5
+    QE_TAKE = 1          # 1: also scale EDGE_TAKE
     # storm-end hazard: storms are regular (mean 84 s, CV 0.44), so lean against the position as the storm ages
     V_HZ = 0.0           # ticks per lot at full age
     HZ_US = 90_000_000   # age (since p_vol crossed P_ON) at which the lean is full
@@ -436,8 +440,14 @@ class R4mMldiV2Strategy(BaseStrategy):
                 fair += self.K_PRE * (1 if self.pre_net > 0 else (-1 if self.pre_net < 0 else 0))
             alert = (self.PW_LO and self.pv >= self.PW_LO) or (self.VW_VMIN and self.vol >= self.VW_VMIN)
             q_edge = self.EDGE + (self.PW_EDGE if alert else 0.0)
+            q_take = self.EDGE_TAKE
+            if self.QE_REF and self.vol > 0:
+                qs = min(1.0, max(self.QE_MIN, self.vol / self.QE_REF))
+                q_edge *= qs
+                if self.QE_TAKE:
+                    q_take *= qs
             q_new = (self.EDGE_NEW + (self.PW_EDGE if alert else 0.0)) if self.EDGE_NEW else 0.0
-            if fair - ba >= self.EDGE_TAKE:
+            if fair - ba >= q_take:
                 pb = nb = math.floor(fair - self.EDGE_TAKE) if self.Q_SWEEP else ba
             elif ba - bb >= 2 and fair - (bb + 1) >= self.EDGE_IN:
                 pb = nb = bb + 1
@@ -449,7 +459,7 @@ class R4mMldiV2Strategy(BaseStrategy):
                 if q_new:
                     while fair - nb < q_new:
                         nb -= 1
-            if bb - fair >= self.EDGE_TAKE:
+            if bb - fair >= q_take:
                 pa = na = math.ceil(fair + self.EDGE_TAKE) if self.Q_SWEEP else bb
             elif ba - bb >= 2 and (ba - 1) - fair >= self.EDGE_IN:
                 pa = na = ba - 1

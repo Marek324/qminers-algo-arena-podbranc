@@ -1,7 +1,8 @@
 """r4m_mldi: r4m_risk_a + weak 2-id jump tier inside the cap + storm distance-weighted depth imbalance (V_K_MLDI 0.6,
-lambda 2 ticks) + Jaro's quiet quote hysteresis (EDGE_NEW 0.3, EDGE 0.15). round4_public 1,204,809; quarters
-344,258 / 314,775 / 297,613 / 247,518 (r4m_risk_a 317,269 / 290,067 / 297,272 / 250,387). Long shot: the depth term
-pays in the heavier-storm first half only.
+lambda 2 ticks) + Jaro's quiet quote hysteresis (EDGE_NEW 0.3, EDGE 0.15) + quiet quote size by the vol forecast
+(QTY * clamp(1.5 / vol, 0.5, 1.5)). round4_public 1,214,033; quarters 350,159 / 314,189 / 296,130 / 247,786
+(r4m_risk_a 1,156,545; 317,269 / 290,067 / 297,272 / 250,387). Long shot: the depth term pays in the heavier-storm
+first half only, the size term is thin. Other switches in this file are experiments, off by default.
 """
 
 import math
@@ -115,10 +116,10 @@ class R4mMldiStrategy(BaseStrategy):
     PW_QP = 0
     # size by the vol forecast (quiet regime): quote size QTY * clamp((QV_REF / vol) ** QV_POW, QV_MIN, QV_MAX)
     # (QV_POW 1: bigger when calm; -1: bigger when busy); inventory skew K_INV * vol / KI_REF (0: off)
-    QV_REF = 0.0
+    QV_REF = 1.5
     QV_POW = 1.0
     QV_MIN = 0.5
-    QV_MAX = 2.0
+    QV_MAX = 1.5
     KI_REF = 0.0
     # storm-end hazard: storms are regular (mean 84 s, CV 0.44), so lean against the position as the storm ages
     V_HZ = 0.0           # ticks per lot at full age

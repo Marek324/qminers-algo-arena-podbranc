@@ -402,6 +402,58 @@ taking up to 900 extra lots of stale levels 5 ms later, an IOC exit after the ho
 positive configuration rests on 5–12 events. This trigger fires before the book moves (Jakub's rule in
 [LEVERAGE.md](LEVERAGE.md): reactive IOC chasing after the mid moves lost everywhere on round 3).
 
+### round4_public: gaps filled (second pass)
+
+Scripts: `jump_probe`, `ioc_check`, `regime_analysis`, `precursors`, `jump_value` (on the `hmm_deep_clear_r3`
+full-logs run), plus two one-off probes of `IdGapJump` (hit rate, and per-jump detector state).
+
+**IOC side now follows momentum. This is the new mechanism of round 4.** P(buy IOC) is 0.56 after an up-move in the
+last 1 s and 0.45 after a down-move (5 s: 0.53 / 0.47). In rounds 1–2 the side was a fair coin. Signed mid move after an
+IOC: +1.0 to +2.3 ticks at 1 s and +1.7 to +3.0 at 5 s, rising with size (m10 ≈ 1.03 · size^0.14), and still +1 to +2 at
+30 s for IOCs over 16 lots. IOC sign autocorrelation is +0.08 at lag 1; arrivals are close to Poisson (CV 1.06) but
+bursty per second (var/mean 2.2). Momentum-driven IOCs explain the trending price, the persistent flow, the doubled
+impact and why `estimate_model.py` (coin-flip IOC sides) no longer fits.
+
+**Momentum by regime** (Spearman of the past move with the future move, 100 ms grid, regime from the strategy's HMM):
+
+| | past 0.5 s → 1 s | past 0.5 s → 5 s | past 10 s → 30 s | (S_hat − mid) → 1 s |
+|---|---|---|---|---|
+| quiet | +0.23 | +0.14 | −0.09 | +0.35 |
+| storm | **+0.51** | **+0.34** | −0.21 | +0.50 |
+| q1 / q2 / q3 / q4 | +0.49 / +0.40 / +0.39 / +0.40 | +0.29 / +0.24 / +0.26 / +0.27 | −0.27 / −0.15 / −0.20 / −0.01 | +0.45 / +0.40 / +0.39 / +0.39 |
+
+The short-horizon signal is about equally strong in every quarter, so the momentum lean's −18k in q2 is not a weaker
+signal. The 30 s reversal varies a lot by quarter (absent in q4); a lean on it lost 2–47% (`RESEARCH.md`).
+
+**Quarters differ in storm intensity, not mechanism.** Storm share 0.26 / 0.37 / 0.38 / 0.26, mid vol at 1 s in storm
+14.0 / 11.5 / 8.6 / 10.8 ticks/√s (quiet 1.3–1.5 throughout), variance ratio at 10 s 1.8–2.3. q4's lower PnL
+(211k vs 286k for the base) is fewer storms. Expect ±25% PnL swings from the market alone on the hidden tape, and judge
+changes by consistency across quarters.
+
+**Jumps.** 304 jumps of ≥ 5 ticks per 100 ms; 37 of ≥ 20 ticks within 0.5 s, 15 of ≥ 40 ticks. Calm stretches are
+memoryless (n 26, mean 143 s, CV 0.80, KS vs exponential p 0.27); storm stretches are more regular (n 25, mean 84 s,
+CV 0.44). Jump counts per 30 s cluster (var/mean 3.3) and switch between two levels (0.27 and 4.1 per 30 s, BIC gain
++220).
+
+**Can jumps be seen coming?** Storm onsets, against calm windows: spread is wider already 60 s before (AUC 0.87);
+3 s before, the placement width of new orders gives AUC 0.96 and touch quantity 0.09 (thin). The HMM already reads the
+placement width. Jump direction: the previous jump's sign 61%, IOC net flow over the 2 s before 71%, new-limit prices
+minus mid over the 1 s before 73%; at the jump itself a 13-feature logistic gets 83% (5-fold CV), driven by signed far
+orders (corr +0.75).
+
+**Stale liquidity at big jumps** (`jump_value`, 31 jumps ≥ 15 ticks): 72k lots trade at prices the new level makes
+stale, worth 662k of edge. `hmm_deep_clear_r3` takes 3.6k lots (5%) and 50k of edge (8%); market takers take the rest,
+the first stale trade a median 8 ms after the jump bin. Our takes in the 0.5 s before a jump mark out +213k at 30 s.
+
+**`IdGapJump` hit rate** (default settings: 3 missing ids within 25 ms). It fires 9 times on the tape, all at real
+jumps, but detects only 7 of the 37 jumps ≥ 20 ticks and **4 of the 15 ≥ 40 ticks** (170 s, 1394 s, 1740 s, 2170 s).
+IDG_MISSING 2 detects 8 of 15 with 23 fires (5 away from any jump); 5 detects 2 of 15. For the missed jumps the
+detector saw only 1–2 missing ids, and the net taker flow in the 0.9 s after often had the wrong sign (−89 ticks with
+net flow +947, −62 with +1,749, +55 with −2,470), so taker flow cannot supply the direction. Tuning a second trigger
+on these 15 events would be overfitting; the sniper keeps the tool's round-3 defaults.
+
+**Generator transfer check** (`scripts/expected_pnl.py`): pending at the time of writing.
+
 **Next:** a momentum term in fair (past 1 s return, stronger flow weight) is the obvious new signal; retune the
 hidden-price σ and the take edges for the higher volatility.
 

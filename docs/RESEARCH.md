@@ -1326,3 +1326,24 @@ neighbouring settings, but it pays only in q1 / q2 (paired robustness chunks als
   ±100 cap a bias can only shift which way the cap is held: 20 extra lots over a 400-tick drift is about 8k.
 - Not built: DP-policy distillation and per-inventory DP take thresholds (in-sample ML, the failure mode of the ML
   take rule); endgame handling (the strategy does not know the tape length; the end position is marked at the mid).
+
+### Round 4: slow biases a short-horizon signal would miss (2026-11-08)
+
+`scripts/slow_bias.py` on round4_public and round3_public (1 s mid grid):
+
+- **Reversion to the 10,000 start:** corr(mid − 10000, next h move) round 4 −0.22 / −0.46 / −0.58 at 60 / 300 / 600 s,
+  round 3 −0.19 / −0.42 / −0.68 (t about −2). **Not real:** paths rebuilt from 10,000 out of each tape's own shuffled
+  60 s return blocks give r −0.16 / −0.35 / −0.47 (round 4) and −0.18 / −0.38 / −0.52 (round 3) by construction
+  (the Dickey-Fuller bias of a random walk regressed on its level); P(null ≤ observed) 0.20–0.44. No reversion to a
+  300 / 1200 s trailing mean either (|r| < 0.11).
+- **Return autocorrelation** (non-overlapping, lag 1): round 4 +0.27 (1 s), +0.14 (5 s), −0.09 (10 s), −0.21 (30 s),
+  0 from 60 s; round 3 +0.12, 0, −0.07, −0.10. The 1–5 s part is the momentum term; the 30 s reversal lean was
+  rejected earlier.
+- **Jumps ≥ 20 ticks:** round 4 19 up / 12 down, signed move after −6.9 (60 s) / −10.6 (300 s); round 3 11 / 9,
+  +3.6 / +3.9. Coin-flip signs, after-jump drift flips sign between tapes.
+- **Time of session** (600 s blocks): up-share 0.42–0.52, no pattern; storm vol falls over round 4 and rises over
+  round 3. **Round-number magnets** (50 / 100): |t| < 1.2.
+- **Drift:** round4_public −446, validation about +350, round3_public −128: each session its own way.
+
+Nothing here is a bias to lean on, even accepting some overfit: each one is inside what a random walk with the tape's
+own jumps and storms produces.

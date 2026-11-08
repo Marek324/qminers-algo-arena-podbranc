@@ -37,7 +37,7 @@ Current tools:
 - `tools/kalman_price.py`: `HiddenPriceKalman` (1-D Kalman filter for the hidden price S from new limit-order prices, with jump inflation after big IOCs, online offset and noise, censored capped orders).
 - `tools/regime_filter.py`: `RegimeFilter` (online 2-state calm/storm HMM forward filter on per-second counts of far-placed new orders, taker events, wide spread and optionally limit inserts; returns P(storm)).
 - `tools/rls.py`: `RLS` (recursive least squares with forgetting; online fair-value prediction, used by `alpha_as_mm`).
-- `tools/id_gap_jump.py`: `IdGapJump` (jump detector from missing market order ids plus orders clamped inside the stale touch; fires 5-25 ms into a jump).
+- `tools/id_gap_jump.py`: `IdGapJump` (jump detector from missing market order ids plus orders clamped inside the stale touch; fires 5-25 ms into a jump; on round 4 it is the leverage trigger that pays, see docs/LEVERAGE.md).
 - `tools/flow_reversion.py`: `FlowReversion` (online regression of the next ~5 s mid move on slow signed taker flow; uses the slope only when it shows mean reversion).
 - `tools/take_gate.py`: `TakeGate` (taker edge threshold raised by filter inconsistency, i.e. the EWMA of innovation z², and by reversing a recent take; optional edge-sized take caps).
 - `tools/breach_gate.py`: `BreachGate` (should we go over |I| = 100? Paper-trades each leveraged excursion on the live book and allows a signal bucket only when its mean net after the 10k $/s penalty is significantly positive).

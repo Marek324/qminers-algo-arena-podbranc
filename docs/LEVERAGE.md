@@ -70,3 +70,32 @@ Reproduce:
 ```
 
 The oracle strategies read the future: never submit them.
+
+## Round 4: an early trigger makes it pay (2026-11-08)
+
+round4_public, `scripts/lever_oracle.py`: hindsight 128k / 422k / **1,878k** for Q = 100 / 300 / 900 (round 3: 79k /
+245k / 936k), 349 excursions, the top 10 carry 38%. They are big discrete jumps (−140 ticks at 170 s, +130 at 1740 s).
+
+**The 20-tick public depth hides the big jumps.** After a 130-tick jump the first new orders at the new level sit 130
+ticks from the best price, outside the snapshot, so a "new order far behind the touch" trigger (`r3_fire`,
+`r4m_snipe`) only sees jumps under about 20 ticks and fired on neither of the two biggest. `IdGapJump`
+(`tools/id_gap_jump.py`) sees them: invisible orders leave gaps in the order ids, and the orders the generator
+clamps at the stale touch give the direction. It fires 5–25 ms into a jump, before the stale side is gone.
+
+Entering on it, as an IOC up to 900 extra lots of the stale side at most `IDG_DEPTH` ticks through the old touch, then
+unwinding once the book reaches the new level (or through the touch after 0.5 s), in the real simulator
+(`strategies/round4/r4m_risk_b.py`, `r4m_risk_a.py`):
+
+| | round4_public | penalty |
+|---|---|---|
+| no leverage (`r4m_safe`) | 1,073,369 | 0 |
+| far-order trigger, SNIPE_FAR 15 | 1,082,973 | 3,786 |
+| id-gap trigger | 1,109,933 | 13,270 |
+| both (`r4m_risk_b`) | 1,124,599 | 11,929 |
+| both + momentum lean (`r4m_risk_a`) | 1,156,545 | 7,963 |
+
+Per quarter the leverage adds +30k / +23k / +2k / 0: it never loses, it pays when a big jump comes. Filled trades
+earn +28 to +107 ticks/lot (1394 s: 505 lots in at 9688, 302 out at 9795). Misses: when the stale side is gone within
+our 5 ms (1740 s: 4 lots). So rule 1 above holds: the trigger has to beat the move into the book; the id-gap detector
+does, the mid and visible far orders don't. On round 3 the same detector added only +0.7k as a filter boost; check
+it as a sniper trigger on any new tape.

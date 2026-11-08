@@ -113,6 +113,13 @@ class R4mMldiStrategy(BaseStrategy):
     VW_VMIN = 0.0
     PW_EDGE = 0.0
     PW_QP = 0
+    # size by the vol forecast (quiet regime): quote size QTY * clamp((QV_REF / vol) ** QV_POW, QV_MIN, QV_MAX)
+    # (QV_POW 1: bigger when calm; -1: bigger when busy); inventory skew K_INV * vol / KI_REF (0: off)
+    QV_REF = 0.0
+    QV_POW = 1.0
+    QV_MIN = 0.5
+    QV_MAX = 2.0
+    KI_REF = 0.0
     # storm-end hazard: storms are regular (mean 84 s, CV 0.44), so lean against the position as the storm ages
     V_HZ = 0.0           # ticks per lot at full age
     HZ_US = 90_000_000   # age (since p_vol crossed P_ON) at which the lean is full
@@ -420,7 +427,10 @@ class R4mMldiStrategy(BaseStrategy):
             self.storm_t = now
         self.in_storm = storm
         if self.pv < self.P_ON:
-            fair = mid + self.K_S * (self.s - mid) + self.K_IMB * imb + self.K_FLOW * fx - self.K_INV * self.inv + self.K_MOM * mom + self.K_OFI * ofi + self.K_DIMB * dimb + ml_q
+            fair = mid + self.K_S * (self.s - mid) + self.K_IMB * imb + self.K_FLOW * fx - self.K_INV * (self.vol / self.KI_REF if self.KI_REF and self.vol > 0 else 1.0) * self.inv + self.K_MOM * mom + self.K_OFI * ofi + self.K_DIMB * dimb + ml_q
+            qq = 0
+            if self.QV_REF and self.vol > 0:
+                qq = max(self.MIN_NEW, int(self.QTY * min(self.QV_MAX, max(self.QV_MIN, (self.QV_REF / self.vol) ** self.QV_POW))))
             if self.K_PRE and self.pv >= self.PRE_LO:
                 fair += self.K_PRE * (1 if self.pre_net > 0 else (-1 if self.pre_net < 0 else 0))
             alert = (self.PW_LO and self.pv >= self.PW_LO) or (self.VW_VMIN and self.vol >= self.VW_VMIN)
@@ -454,13 +464,13 @@ class R4mMldiStrategy(BaseStrategy):
             if now < self.block[1] and pb < ba:
                 self._clear(1)
             elif qp == 0 or pb >= ba or (qp == 1 and self.inv < 0):
-                self._side(1, pb, 0, nb)
+                self._side(1, pb, qq, nb)
             else:
                 self._clear(1)
             if now < self.block[-1] and pa > bb:
                 self._clear(-1)
             elif qp == 0 or pa <= bb or (qp == 1 and self.inv > 0):
-                self._side(-1, pa, 0, na)
+                self._side(-1, pa, qq, na)
             else:
                 self._clear(-1)
             return

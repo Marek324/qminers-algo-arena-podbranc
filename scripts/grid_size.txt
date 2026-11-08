@@ -1,0 +1,12 @@
+base:
+calm15_x2: QV_REF=1.5, QV_MAX=2.0
+calm15_x15: QV_REF=1.5, QV_MAX=1.5
+calm15_x3: QV_REF=1.5, QV_MAX=3.0
+calm2_x2: QV_REF=2.0, QV_MAX=2.0
+calm1_x2: QV_REF=1.0, QV_MAX=2.0
+calm15_x2_min025: QV_REF=1.5, QV_MAX=2.0, QV_MIN=0.25
+calm15_sqrt: QV_REF=1.5, QV_POW=0.5, QV_MAX=2.0
+busy15_x2: QV_REF=1.5, QV_POW=-1.0, QV_MAX=2.0
+ki15: KI_REF=1.5
+ki3: KI_REF=3.0
+calm15_x2_ki15: QV_REF=1.5, QV_MAX=2.0, KI_REF=1.5

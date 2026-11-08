@@ -1,0 +1,5 @@
+off: QV_REF=0.0
+vs15: QV_REF=1.5
+vs12: QV_REF=1.2
+vs2: QV_REF=2.0
+vs15_max2: QV_REF=1.5, QV_MAX=2.0

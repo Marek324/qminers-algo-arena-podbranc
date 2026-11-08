@@ -171,6 +171,13 @@ class R4mTierStrategy(BaseStrategy):
     WEAK_DEPTH = 5       # sweep up to this many ticks through the touch
     WEAK_COOLDOWN_US = 300_000
     WEAK_STORM = 0       # 1: weak tier only when p_vol >= P_ON
+    # order-book layer: order-flow imbalance at the touch (Cont et al., includes cancels) and depth imbalance over levels
+    K_OFI = 0.0          # ticks per (decayed OFI / mean touch depth), quiet
+    V_K_OFI = 0.0        # same, storm
+    OFI_TAU_US = 500_000
+    K_DIMB = 0.0         # ticks per unit of (bid depth - ask depth) / total over DIMB_LEVELS ticks, quiet
+    V_K_DIMB = 0.0       # same, storm
+    DIMB_LEVELS = 5
     K_MOM = 0.1
     V_K_MOM = 0.1
     MOM_US = 500_000
@@ -307,6 +314,10 @@ class R4mTierStrategy(BaseStrategy):
         self.idg2 = IdGapJump(self.IDG_WINDOW_US, self.WEAK_MISSING) if self.WEAK_MISSING else None
         self.weak_t = -10**12
         self.weak_id = None
+        self.ofi = 0.0
+        self.ofi_t = 0
+        self.pbq = 0
+        self.paq = 0
 
     def _cancel(self, oid: str) -> None:
         if oid not in self.cancel_sent:
@@ -354,6 +365,13 @@ class R4mTierStrategy(BaseStrategy):
         if asks is not self.last_asks:
             self.last_asks = asks
             self._scan_new(asks, 1, now)
+        if self.K_OFI or self.V_K_OFI:
+            if self.pbb:
+                eb = bq if bb > self.pbb else (bq - self.pbq if bb == self.pbb else -self.pbq)
+                ea = aq if ba < self.pba else (aq - self.paq if ba == self.pba else -self.paq)
+                self.ofi = self.ofi * math.exp((self.ofi_t - now) / self.OFI_TAU_US) + eb - ea
+                self.ofi_t = now
+            self.pbq, self.paq = bq, aq
         self.pbb, self.pba = bb, ba
 
         # flow
@@ -388,9 +406,14 @@ class R4mTierStrategy(BaseStrategy):
             self._flow_check(now, x, mid)
         fx = self.flow_scale * x
         imb = (bq - aq) / (bq + aq)
+        if self.K_OFI or self.V_K_OFI:
+            ofi = self.ofi * math.exp((self.ofi_t - now) / self.OFI_TAU_US) / self.depth
+        else:
+            ofi = 0.0
+        dimb = self._dimb(bids, asks, bb, ba) if (self.K_DIMB or self.V_K_DIMB) else 0.0
 
         if self.pv < self.P_ON:
-            fair = mid + self.K_S * (self.s - mid) + self.K_IMB * imb + self.K_FLOW * fx - self.K_INV * self.inv + self.K_MOM * mom
+            fair = mid + self.K_S * (self.s - mid) + self.K_IMB * imb + self.K_FLOW * fx - self.K_INV * self.inv + self.K_MOM * mom + self.K_OFI * ofi + self.K_DIMB * dimb
             if fair - ba >= self.EDGE_TAKE:
                 pb = math.floor(fair - self.EDGE_TAKE) if self.Q_SWEEP else ba
             elif ba - bb >= 2 and fair - (bb + 1) >= self.EDGE_IN:
@@ -418,7 +441,7 @@ class R4mTierStrategy(BaseStrategy):
                 self._clear(-1)
             return
 
-        fair = mid + self.V_K_S * (self.s - mid) + self.V_K_FLOW * fx - self.V_K_INV * self.inv + self.V_K_MOM * mom
+        fair = mid + self.V_K_S * (self.s - mid) + self.V_K_FLOW * fx - self.V_K_INV * self.inv + self.V_K_MOM * mom + self.V_K_OFI * ofi + self.V_K_DIMB * dimb
         if fair - ba >= self.V_EDGE_TAKE:
             self._side(1, math.floor(fair - self.V_EDGE_TAKE) if self.V_SWEEP else ba, self.V_QTY)
         else:
@@ -603,6 +626,22 @@ class R4mTierStrategy(BaseStrategy):
         self.orders[self.snipe_id] = [sg, limit_px, q]
         self.snipe_s = s_new
         self.snipe_t = now
+
+    def _dimb(self, bids, asks, bb: int, ba: int) -> float:
+        lo, hi = bb - self.DIMB_LEVELS, ba + self.DIMB_LEVELS
+        b = 0
+        for o in bids:
+            if o.price <= lo:
+                break
+            if o.owner == 'market':
+                b += o.quantity
+        a = 0
+        for o in asks:
+            if o.price >= hi:
+                break
+            if o.owner == 'market':
+                a += o.quantity
+        return (b - a) / (b + a) if b + a else 0.0
 
     def _weak(self, d: int, bb: int, ba: int, now: int) -> None:
         """Weak jump sign in direction d: take toward +-WEAK_POS inside the cap at once."""

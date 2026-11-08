@@ -1,0 +1,15 @@
+base:
+ofi025: K_OFI=0.25, V_K_OFI=0.25
+ofi05: K_OFI=0.5, V_K_OFI=0.5
+ofi1: K_OFI=1.0, V_K_OFI=1.0
+ofi05_q: K_OFI=0.5
+ofi05_v: V_K_OFI=0.5
+ofi05_t2: K_OFI=0.5, V_K_OFI=0.5, OFI_TAU_US=2000000
+ofi05_t01: K_OFI=0.5, V_K_OFI=0.5, OFI_TAU_US=100000
+dimb02: K_DIMB=0.2, V_K_DIMB=0.2
+dimb05: K_DIMB=0.5, V_K_DIMB=0.5
+dimb1: K_DIMB=1.0, V_K_DIMB=1.0
+dimb05_q: K_DIMB=0.5
+dimb05_v: V_K_DIMB=0.5
+dimb05_l10: K_DIMB=0.5, V_K_DIMB=0.5, DIMB_LEVELS=10
+ofi05_dimb05: K_OFI=0.5, V_K_OFI=0.5, K_DIMB=0.5, V_K_DIMB=0.5

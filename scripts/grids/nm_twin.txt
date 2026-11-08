@@ -1,0 +1,2 @@
+nm6: H_NMAX=6
+nm5: H_NMAX=5

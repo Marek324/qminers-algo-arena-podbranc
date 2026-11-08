@@ -1,0 +1,14 @@
+# round 3: coarse steps on the main constants, cap below the limit, strong inventory skew, IOC-gap HMM
+MAX_POS = 70, 85
+K_INV = 0.005, 0.01
+V_K_INV = 0.005, 0.01
+QTY = 100, 250
+EDGE = 0.1, 0.3
+V_EDGE_TAKE = 0.35, 0.8
+K_S = 0.5, 1.0
+V_K_S = 0.6, 1.0
+EDGE_TAKE = 0.15, 0.4
+P_ON = 0.3, 0.7
+H_IOC = True
+FLOW_CHECK_H_US = 250_000, 1_000_000
+FLOW_CHECK_MIN = 100.0, 400.0

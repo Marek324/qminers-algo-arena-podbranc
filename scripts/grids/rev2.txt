@@ -1,0 +1,6 @@
+veto037: K_F10=0.37, REV_QUOTES=False
+veto10: K_F10=1.0, REV_QUOTES=False
+veto20: K_F10=2.0, REV_QUOTES=False
+q005: K_F10=0.05
+q01: K_F10=0.1
+q005_c05: K_F10=0.05, F10_CAP=0.5

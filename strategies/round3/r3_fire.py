@@ -111,7 +111,10 @@ class R3FireStrategy(BaseStrategy):
                          # the jump by about 1.41x, so 0.6-0.7 places the sweep limit right (1.0: price -+ X_MEAN)
     EXIT_PASSIVE = False # rest the overshoot as one limit order at the new S for the post-jump taker surge to lift
     PASSIVE_OFF = 0.0    # its price: S_new + PASSIVE_OFF for a long position (mirrored for a short)
-    SNIPE_QUIET_ONLY = False  # snipe only while hmm_mm's HMM still says quiet (it is not sweeping the stale side itself)
+    SNIPE_QUIET_ONLY = False
+    KILL_RATE_N = 4              # kill switch: more than this many snipes within KILL_RATE_US stops sniping for good
+    KILL_RATE_US = 600_000_000
+    KILL_OVER_US = 3_000_000     # kill switch: total time over MAX_POS (3 s = 30k of penalty) stops sniping for good  # snipe only while hmm_mm's HMM still says quiet (it is not sweeping the stale side itself)
     # flow
     FLOW_TAU_US = 100_000
     DEPTH_EMA = 0.001
@@ -165,6 +168,10 @@ class R3FireStrategy(BaseStrategy):
         self.over_since = 0
         self.far_seen: list = []  # (time, sign, price) of recent far orders
         self.pexit_id = None      # resting passive exit order
+        self.killed = False       # kill switch tripped: no more snipes
+        self.snipe_times: deque = deque()
+        self.over_total = 0
+        self.over_last = 0
 
     def _cancel(self, oid: str) -> None:
         if oid not in self.cancel_sent:
@@ -359,6 +366,14 @@ class R3FireStrategy(BaseStrategy):
             return
         if self.SNIPE_QUIET_ONLY and self.pv >= self.P_ON:
             return
+        if self.killed or self.over_total > self.KILL_OVER_US:
+            self.killed = True
+            return
+        while self.snipe_times and now - self.snipe_times[0] > self.KILL_RATE_US:
+            self.snipe_times.popleft()
+        if len(self.snipe_times) >= self.KILL_RATE_N:
+            self.killed = True   # far orders far more often than on the real tapes: the trigger is not seeing jumps
+            return
         if sign < 0:   # a buy far below: S fell to about price + X_MEAN, the bids above it are stale
             s_new = price + self.X_MEAN if self.DEPTH_SHRINK >= 1.0 else self.ba - 1 - self.DEPTH_SHRINK * (self.ba - 1 - price)
             limit_px = math.ceil(s_new + self.SNIPE_MARGIN)
@@ -377,6 +392,7 @@ class R3FireStrategy(BaseStrategy):
             side, sg = Side.BUY, 1
         if q < self.MIN_NEW:
             return
+        self.snipe_times.append(now)
         self.snipe_id = self.send_order(OrderRequest(side=side, price=limit_px, quantity=q, order_type=OrderType.IOC))
         self.orders[self.snipe_id] = [sg, limit_px, q]
         self.snipe_s = s_new
@@ -387,7 +403,11 @@ class R3FireStrategy(BaseStrategy):
         inv = self.inv
         if abs(inv) <= self.MAX_POS:
             self.over_since = 0
+            self.over_last = 0
             return
+        if self.over_last:
+            self.over_total += now - self.over_last
+        self.over_last = now
         if not self.over_since:
             self.over_since = now
         if self.unwind_id is not None:

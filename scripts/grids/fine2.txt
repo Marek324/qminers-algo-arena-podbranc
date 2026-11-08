@@ -1,0 +1,4 @@
+nm4: H_NMAX=4
+nm3: H_NMAX=3
+nm5: H_NMAX=5
+nm2: H_NMAX=2

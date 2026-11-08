@@ -1,0 +1,17 @@
+# round 3: constants the final submission never tuned (current value always kept)
+KF_LEVELS = 2, 3, 6
+KF_LEVELS_V = 2, 3, 6
+MIN_NEW = 5, 20
+KEEP_LEVELS = 0, 2
+V_EXIT_EDGE = 2.0, 4.0
+V_K_INV = 0.002, 0.005
+Q_SWEEP = True
+K_REV = 0.05, 0.1
+FLOW_TAU_US = 50_000, 200_000
+DEPTH_EMA = 0.0005, 0.003
+FLOW_CHECK = False
+FLOW_SLOPE_FULL = 0.3, 0.8
+H_LR = 0.0001, 0.001
+H_NMAX = 10, 30
+C_LR = 0.0002, 0.002
+R_MIN = 0.05, 0.2

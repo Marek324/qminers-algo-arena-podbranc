@@ -1,0 +1,7 @@
+base: 
+sq07: SIG_Q=0.7
+sq08: SIG_Q=0.8
+nm8: H_NMAX=8
+nm6: H_NMAX=6
+nm12: H_NMAX=12
+sq07_nm8: SIG_Q=0.7, H_NMAX=8

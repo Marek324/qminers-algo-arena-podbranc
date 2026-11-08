@@ -1466,3 +1466,15 @@ there is no capital limit, and |inventory| is at 100 at the median, so the cap i
 ref 1.5 / 1.2 / 2.0 → full 1,151,856 / 1,146,373 / 1,144,943 (r4m_risk_a 1,156,545); ref 1.5 quarters −5.2k / −1.4k /
 +1.3k / +1.7k. Without the hysteresis and depth term of r4m_mldi the size term loses, so v2's +9k from it depends on
 the rest of that file and is fragile.
+
+### Round 4: validation results of the long shots (arena, 2026-11-08)
+
+| submission | validation (12,000 s) | penalty | vs r4m_risk_a |
+|---|---|---|---|
+| **r4m_mldi.py** (09:32, marked final) | **2,034,207** | 12,743 | **+69k** |
+| r4m_mldi_v2.py (10:11) | 2,029,878 | 12,793 | +65k |
+| Jaro, 10:15 | 2,024,010 | 12,793 | +59k |
+| r4m_risk_a.py (07:28) | 1,965,048 | 12,138 | — |
+
+The storm depth-imbalance layer transferred (public +48k per 6,000 s, validation +69k per 12,000 s); the vol-forecast
+quote size in v2 did not add (−4k, noise), as its dependence on the rest of the file suggested.

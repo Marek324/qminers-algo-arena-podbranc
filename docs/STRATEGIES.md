@@ -55,7 +55,7 @@ Analysis: `uv run analysis.py data/<file>.csv` (tape report, see [ANALYSIS.md](A
 
 - One market order per side, constant 2-tick spread, requotes every ~0.37 s or 1 s.
 - About 0.17 IOCs per second. After each one, the mid walks **about 10 ticks in the IOC's direction over 3–5 s**, then gives back about 3 ticks over the next 15 s.
-- Best strategy: **follow the flow** (row 5 above). `strategies/flow_momentum.py` makes **290,944**.
+- Best strategy: **follow the flow** (row 5 above). `strategies/round1/flow_momentum.py` makes **290,944**.
 - The market-making strategy loses 10,518 here.
 
 ### `data/sample_v2.csv` (about 96 min, 2M rows)
@@ -67,7 +67,7 @@ Analysis: `uv run analysis.py data/<file>.csv` (tape report, see [ANALYSIS.md](A
 - Our resting fills earned **0.84 ticks per lot** against the mid, and that edge didn't decay over 60 s. So profit is limited only by how many lots we get filled.
 - The size imbalance at the best bid and ask predicts the next 0.5 s move (correlation 0.45, about ±0.3 ticks at the extremes). That's too small to pay the spread, but useful for skewing quotes.
 - The price is a random walk with a slight trend (variance ratio 1.1–1.2).
-- Best strategy: **market making** (rows 2, 3 and 4 above). `strategies/imbalance_mm.py` makes **276,307**.
+- Best strategy: **market making** (rows 2, 3 and 4 above). `strategies/round1/imbalance_mm.py` makes **276,307**.
 - `flow_momentum.py` loses 3,049,276 here.
 
 ### `data/round1.csv` (first scored round, 200 min, 4.4M rows)
@@ -86,7 +86,7 @@ Analysis: `uv run analysis.py data/<file>.csv` (tape report, see [ANALYSIS.md](A
 
 ## 3. Our strategies
 
-### `strategies/flow_momentum.py` (built for the first sample)
+### `strategies/round1/flow_momentum.py` (built for the first sample)
 
 1. **Signal:** a trade between two market orders. Buy aggression means go long, sell aggression means go short.
 2. **Entry:** IOC orders at the best price for 1.5 s, up to 95 lots, while the price is no more than 6 ticks past the signal.
@@ -97,7 +97,7 @@ Lessons:
 - Each price level sees only one market order of about 25 lots as the price walks past, which limits both entry and exit size.
 - Holding the full position to the top of the move beat selling early. Trailing stops, a stall exit and 1-tick ladders all did worse.
 
-### `strategies/imbalance_mm.py` (the current choice)
+### `strategies/round1/imbalance_mm.py` (the current choice)
 
 1. **Fair price** = mid + `K_IMB` × imbalance + `K_FLOW` × flow / depth − `K_INV` × inventory. Flow is signed aggressive volume fading over `FLOW_TAU_US` (0.2 s); depth is the average size at the best price.
 2. **Bid:** the highest price ≤ best bid with fair − price ≥ `EDGE`. Inside a 2-tick spread only if fair − price ≥ `EDGE_IN` (kept at 0.5, which in practice means never). The ask mirrors it.
@@ -156,7 +156,7 @@ Tested after the generator forensics in [DATA_ANALYSIS.md](DATA_ANALYSIS.md) (al
 - **A better S forecast doesn't mean more PnL here.** The strategy only uses S to decide whether to step back a tick or cross in, and the smoother per-side average decides that better than the sharper estimators.
 - The experimental code (estimator modes and the sweep term) is not in the strategy file. It was kept out to keep the submission lean.
 
-### `strategies/regime_mm.py` (round 2)
+### `strategies/round2/regime_mm.py` (round 2)
 
 Built for `round2_public` (6,000 s, hindsight max 1,705,028). The round-1 market makers all lose there (`imbalance_mm` −62,712, `adaptive_mm_plus` −62,278, `queue_mm` −150,260). The tape alternates between a quiet and a volatile regime ([DATA_ANALYSIS.md](DATA_ANALYSIS.md#two-regimes)), and the split explains the losses: `imbalance_mm` makes +236k in the quiet spells and loses −298k in the volatile ones (958 s, 16% of the time).
 

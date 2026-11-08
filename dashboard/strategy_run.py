@@ -223,7 +223,8 @@ class StrategyRun:
 
 
 def strategy_files() -> list[Path]:
-    return sorted(p for p in (ROOT / 'strategies').glob('*.py') if not p.name.startswith('_'))
+    """Strategy files in strategies/ and its family subfolders (names are unique across folders)."""
+    return sorted((p for p in (ROOT / 'strategies').rglob('*.py') if not p.name.startswith('_')), key=lambda p: p.name)
 
 
 def run_strategy(strategy_path: Path, tape_path: Path, tape: engine.Tape, overrides: dict | None = None) -> StrategyRun:

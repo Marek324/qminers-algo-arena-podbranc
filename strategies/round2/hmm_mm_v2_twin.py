@@ -1,6 +1,23 @@
-"""hmm_mm (JPod's) with two changes: a faster learned price-to-S gap and taker sweeps as bounds on S.
+"""TEST VERSION: hmm_mm_v2.py with four settings tuned on the round 2 validation twin (docs/RESEARCH.md).
 
-Changes from strategies/hmm_mm.py, everything else identical:
+Purpose: a validation run of this file tells whether tuning on generated tapes transfers to the real market.
+
+Changes from hmm_mm_v2.py (everything else identical):
+- K_FLOW 0.8 -> 0.5, K_INV 0.002 -> 0.001, EDGE_TAKE 0.25 -> 0.35 (quiet regime), SIG_V 10 -> 15 (volatile Kalman).
+Expected, from local backtests:
+- validation twin (first version, since replaced by scripts/path_twin.py; the validation session's real price path): +139k (seed 1) and +135k (seed 2)
+  over hmm_mm_v2. If the twin is right, validation about 1.29M + 0.13M = 1.42M.
+- real round2_public: 432,669 against 515,547 (-83k, -16%), no penalty. If public is the better guide, validation about 1.08M.
+Arena validation result: 1,293,574 against hmm_mm_v2's 1,291,224, a tie (+2k, well inside the ~40k noise). Neither
+the twin's +135k nor public's -16% transferred: keep hmm_mm_v2.
+The generated order flow favours these settings on any generated tape, so a score near 1.08M means generated tapes
+cannot be used for tuning flow and inventory settings; near 1.42M means they can.
+
+Docstring of hmm_mm_v2.py:
+
+hmm_mm (JPod's) with two changes: a faster learned price-to-S gap and taker sweeps as bounds on S.
+
+Changes from strategies/round2/hmm_mm.py, everything else identical:
 - C_LR 0.002 instead of 0.0005: the gap c between new orders and S is learned faster.
 - Taker sweep bounds: market takers are priced at round(S +- 1), so a taker buy that trades up to price p proves
   S >= p - 1 (with no slack); S_hat is pulled half way (SWEEP_W 0.5) to that bound when it sits below it. Sells
@@ -50,7 +67,7 @@ from simulator.models import (
 from simulator.strategy import BaseStrategy
 
 
-class HmmMMV2Strategy(BaseStrategy):
+class HmmMMV2TwinStrategy(BaseStrategy):
     QTY = 200
     MAX_POS = 100
     MIN_NEW = 10
@@ -58,11 +75,11 @@ class HmmMMV2Strategy(BaseStrategy):
     # quiet regime (round 1 market maker settings)
     EDGE = 0.3
     EDGE_IN = 0.5
-    EDGE_TAKE = 0.25
+    EDGE_TAKE = 0.35     # hmm_mm_v2: 0.25
     K_IMB = 0.15
-    K_INV = 0.002
+    K_INV = 0.001        # hmm_mm_v2: 0.002
     K_S = 0.75
-    K_FLOW = 0.8
+    K_FLOW = 0.5         # hmm_mm_v2: 0.8
     # volatile regime
     V_EDGE_TAKE = 0.55
     V_EXIT_EDGE = 100.0
@@ -79,7 +96,7 @@ class HmmMMV2Strategy(BaseStrategy):
     H_NMAX = 20
     # Kalman filter for S
     SIG_Q = 0.5          # ticks / sqrt(s) in the quiet state
-    SIG_V = 10.0          # in the volatile state
+    SIG_V = 15.0         # in the volatile state (hmm_mm_v2: 10)
     KF_LEVELS = 1000     # use new orders up to this many ticks behind their best price
     C_LR = 0.002         # weight of each order in the learned price-to-S gap c (hmm_mm: 0.0005)
     R_MIN = 0.1

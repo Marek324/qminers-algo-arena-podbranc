@@ -64,5 +64,5 @@ direct call above in a shell that has `ARENA_TOKEN` set.
 
 ## Round 1 for reference
 
-Our final was `strategies/adaptive_mm_plus.py`: 678,057 public, 667,357 private, 3rd of 61 (z +1.69). Leader
+Our final was `strategies/round1/adaptive_mm_plus.py`: 678,057 public, 667,357 private, 3rd of 61 (z +1.69). Leader
 GammaStrike at 792,696 (z +2.60). Mean of the 60 positive teams 434,481, sd 137,534.

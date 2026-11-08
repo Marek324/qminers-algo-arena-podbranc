@@ -275,7 +275,7 @@ The jumps sit inside **volatile spells**. The generator switches abruptly betwee
 - So X (and the IOC offset) roughly doubles, the IOC rate rises by half, and S moves 4–6× faster. The big jumps (+56 at 1,559 s, −92 at 3,872 s, …) fall in or right next to volatile spells. The spells last from a few seconds to several minutes (2,030–2,145 s, 3,630–3,700 s, 3,840–4,020 s).
 - **What a jump looks like** (+56 at 1,559.66 s): the ask side, already thin in the volatile spell, empties by timer cancels. New bids arrive clamped at best ask − 1, then the first new ask lands at 9,942 with the old best ask at 9,886. Old bids stay stranded 50 ticks below. There is almost nothing stale to buy (27 lots), so the jump pays only if the position is already on the right side. The clamped bids are the early sign, and a clamp-aware S estimate picks them up (`tools/clamped_ema.py`).
 - **Taking the stale book pays in both regimes.** At the onset of S − best ask ≥ th, buying at the ask 5 ms later gains, against the mid 1 s later: quiet +1.84 (th 1, 386 onsets), volatile +1.15 (th 1, 2,462) and +2.77 (th 2, 820). Resting orders in volatile spells lose at any distance from S, including first in queue inside the spread (offline: −0.7 to −6.6 ticks/lot).
-- The regime shows in the placement width within a few dozen orders (about 0.2 s), so it works as a live switch (`tools/regime_score.py`, used by `strategies/regime_mm.py`).
+- The regime shows in the placement width within a few dozen orders (about 0.2 s), so it works as a live switch (`tools/regime_score.py`, used by `strategies/round2/regime_mm.py`).
 
 ## What this means for strategies
 

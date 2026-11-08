@@ -1,29 +1,4 @@
-"""Regime-aware market maker: strategies/jump_guard_mm.py plus a calm/storm regime filter and a far-order jump trigger.
-
-Round 2 is the round1 market (calm, ~72% of the time, stretches of ~160 s) with storms switched on (~60 s each: jumps
-every ~10 s, vol x3, more IOCs, wider spreads). A switch is not announced, so the strategy detects the state online:
-- RegimeFilter (tools/regime_filter.py): a 2-state HMM forward filter fed once a second with the count of new market
-  limit orders placed far from the touch, the count of market taker events and whether the spread is above 1 tick.
-  P(storm) > P_STORM switches the quotes to EDGE_STORM / QUOTE_SIZE_STORM / MAX_POS_STORM (QUOTE_SIZE_STORM = 0 pulls
-  them).
-- Far-order trigger: a new market limit order FAR_TRIGGER or more ticks behind the touch means S has just jumped away
-  from the book (it precedes every >= 15-tick jump, 0.1-0.7 s before the mid moves). It starts a jump storm at once:
-  quotes on the side being run over are pulled for STORM_US.
-Calm quoting is unchanged round1 market making.
-
-Docstring of jump_guard_mm.py:
-
-Jump-guarded market maker: strategies/adaptive_mm_plus.py plus a guard against jumps in the hidden price.
-
-Round 2 adds jumps to S: about one episode a minute, median 13 ticks, up to 100, building over ~4 s and never
-reverting (docs/DATA_ANALYSIS.md). Quoting at the touch through one buys all the way down and pins inventory at the
-limit. The guard: momentum = mid now minus the mid MOM_LAG_US ago. When |momentum| >= JUMP_MIN ticks (round 1 never
-moved 4 ticks in a second, so it stays off there), fair shifts by K_MOM * momentum, quotes on the side being run over
-are pulled for STORM_US, and a position against the move is flattened with IOCs.
-
-Original docstring of adaptive_mm_plus.py:
-
-Adaptive market maker, upgraded: strategies/adaptive_mm.py (David's) plus room-freeing by shrinking.
+"""Adaptive market maker, upgraded: strategies/round1/adaptive_mm.py (David's) plus room-freeing by shrinking.
 
 Changes from adaptive_mm.py (everything else is identical; see its docstring below):
 - SHRINK: when the target order needs room, the deepest kept order is shrunk with modify_order by the lots needed
@@ -48,7 +23,7 @@ Maker leg (the money on round 1): quotes passively around a fair price.
   imbalance, recent aggressive volume and inventory. The tape's limit orders are placed around a
   hidden price that random-walks, and the visible mid lags it by about 0.5 s; the estimate is the
   average of running means of newly arrived limit-order prices on each side. (Fair-value design
-  and hidden-price estimate from strategies/imbalance_mm.py.)
+  and hidden-price estimate from strategies/round1/imbalance_mm.py.)
 - Quote prices: the best price that keeps at least EDGE ticks from fair; cross the spread when fair
   is EDGE_TAKE beyond the opposite best price; inside a 2+ tick spread only with EDGE_IN of edge.
 - Orders are as large as the position cap allows. An order the target moves a tick away from is
@@ -70,8 +45,8 @@ misleads the quotes (control tapes: about -84k per hour). So its weight is scale
 has predicted the mid 0.5 s ahead over roughly the last 5 minutes, and drops to 0 when it hasn't.
 That cut the control-tape losses to -6k ... -24k with no cost on round 1.
 
-Run:  uv run exchange-simulator --strategy strategies/adaptive_mm.py --backtest data/round1.csv --log-dir logs/adaptive --no-logs
-Tune: python3 -I scripts/sweep.py strategies/adaptive_mm.py data/round1.csv -p EDGE=0.25,0.3,0.35
+Run:  uv run exchange-simulator --strategy strategies/round1/adaptive_mm.py --backtest data/round1.csv --log-dir logs/adaptive --no-logs
+Tune: python3 -I scripts/sweep.py strategies/round1/adaptive_mm.py data/round1.csv -p EDGE=0.25,0.3,0.35
 Experiment history: docs/RESEARCH.md.
 """
 from __future__ import annotations
@@ -139,31 +114,6 @@ KEEP_EDGE = 0.25  # an existing order priced better than the target is kept whil
 # Upgrade
 SHRINK = True  # free room for the target order by shrinking the deepest kept order instead of cancelling it
 
-# Jump guard
-JUMP_GUARD = True
-MOM_LAG_US = 1_000_000  # momentum = mid now minus the mid this long ago
-JUMP_MIN = 5.0  # |momentum| in ticks that starts a storm
-K_MOM = 0.0  # fair shift per tick of momentum while |momentum| >= JUMP_MIN
-STORM_US = 2_000_000  # quotes on the run-over side stay pulled this long after the last trigger
-FLATTEN = True  # in a storm, close a position held against the move with IOCs
-FLAT_SIZE = 50  # lots per flattening IOC
-
-# Over-limit inventory: the exchange charges 10,000 per second while |inventory| > 100, however far over.
-# MAX_POS above 100 lets the quotes overshoot; every overshoot is closed at once with an IOC.
-PENALTY_POS = 100  # the exchange's limit
-UNWIND = True  # when |inventory| > PENALTY_POS, IOC back to UNWIND_TO immediately
-UNWIND_TO = 100  # target |inventory| after an unwind
-UNWIND_SLIP = 2  # the unwind IOC crosses this many ticks through the touch so it fills
-
-# Regimes
-REGIME = True
-P_STORM = 0.5  # P(storm) above which the storm quoting applies
-EDGE_STORM = 1.0  # min ticks between a passive quote and fair in a storm
-QUOTE_SIZE_STORM = 100  # lots wanted per side in a storm (0: no quotes)
-MAX_POS_STORM = 60  # worst-case |inventory| cap in a storm
-FAR_COUNT = 4  # a new market limit order this many ticks behind the touch counts as evidence for the filter
-FAR_TRIGGER = 6  # ... and this many starts a jump storm on its side at once (0: off)
-
 # Risk
 MAX_POS = 100  # worst case |inventory| if every open order on one side fills (penalty only above 100)
 
@@ -188,38 +138,7 @@ def _touch(levels: list) -> tuple[int | None, int]:
     return best, qty
 
 
-class RegimeFilter:
-    """Online 2-state (calm / storm) HMM forward filter on per-second counts (tools/regime_filter.py)."""
-
-    def __init__(self, calm_dur_s=158.0, storm_dur_s=61.0, far_rate=(0.36, 10.5), ioc_rate=(8.06, 10.4),
-                 wide_p=(0.074, 0.32), temper=0.25, p0=0.28):
-        self.a01 = 1.0 / calm_dur_s
-        self.a10 = 1.0 / storm_dur_s
-        self.far = far_rate
-        self.ioc = ioc_rate
-        self.wide = wide_p
-        self.temper = temper
-        self.p = p0
-
-    def _loglik(self, state: int, far: float, ioc: float, wide: int) -> float:
-        lf, li = self.far[state], self.ioc[state]
-        lw = self.wide[state]
-        return (far * math.log(lf) - lf + ioc * math.log(li) - li
-                + (math.log(lw) if wide else math.log(1.0 - lw)))
-
-    def update(self, far: float, ioc: float, wide: int) -> float:
-        """One second of evidence; returns P(storm)."""
-        p = self.p
-        prior = p * (1.0 - self.a10) + (1.0 - p) * self.a01
-        d = self.temper * (self._loglik(1, far, ioc, wide) - self._loglik(0, far, ioc, wide))
-        d = max(-30.0, min(30.0, d))
-        odds = prior / (1.0 - prior) * math.exp(d)
-        self.p = odds / (1.0 + odds)
-        self.p = min(max(self.p, 1e-6), 1.0 - 1e-6)
-        return self.p
-
-
-class StormMarketMaker(BaseStrategy):
+class AdaptiveMarketMakerPlus(BaseStrategy):
     """See the module docstring. State: inventory and target position, our open orders, the
     decayed signals (OFI, aggressive flow, average touch size) and the shadow taker."""
 
@@ -258,23 +177,6 @@ class StormMarketMaker(BaseStrategy):
         self._sh_equity = 0.0
         self._sh_pending: tuple[int, int, int] | None = None  # (ready_ts, +1 buy / -1 sell, limit price)
         self._edge = 0.0
-
-        self._mids: deque = deque()  # (ts, mid) at each mid change, covering the last MOM_LAG_US
-        self._storm_until = 0
-        self._storm_dir = 0
-        self._flat_id: str | None = None
-        self._unwind_id: str | None = None
-        self._regime = RegimeFilter()
-        self._p_storm = 0.0
-        self._sec_next = 0
-        self._far_n = 0
-        self._ioc_n = 0
-        self._edge_q = EDGE
-        self._qsize = QUOTE_SIZE
-        self._maxpos = MAX_POS
-        self._now = 0
-        self._bid = 0
-        self._ask = 0
 
     def _update_signals(self, ts: int, bid: int, bid_qty: int, ask: int, ask_qty: int) -> None:
         """Decay the signals to `ts`, then add this event.
@@ -318,8 +220,8 @@ class StormMarketMaker(BaseStrategy):
             if order[0] is side:
                 open_qty += order[2]
         if side is BUY:
-            return self._maxpos - (self._inventory + open_qty)
-        return self._maxpos + (self._inventory - open_qty)
+            return MAX_POS - (self._inventory + open_qty)
+        return MAX_POS + (self._inventory - open_qty)
 
     def _send(self, side: Side, price: int, qty: int, order_type: OrderType) -> str:
         order_id = self.send_order(OrderRequest(side=side, price=price, quantity=qty, order_type=order_type))
@@ -404,90 +306,19 @@ class StormMarketMaker(BaseStrategy):
         """
         first = views[0].price
         top_id = self._max_id
-        opp = self._ask if sign < 0 else self._bid  # the opposite best, as in scripts/regime_features.py
         for o in views:
+            if (o.price - first) * sign > S_LEVELS:
+                break
             if o.owner != 'market':
                 continue
             oid = o.order_id
             if len(oid) > len(top_id) or (len(oid) == len(top_id) and oid > top_id):
-                if REGIME and opp:
-                    behind = (opp - 1 - o.price) if sign < 0 else (o.price - opp - 1)
-                    if behind >= FAR_COUNT:
-                        self._far_n += 1
-                    if FAR_TRIGGER and behind >= FAR_TRIGGER and JUMP_GUARD:
-                        self._storm_until = self._now + STORM_US  # S jumped away from this side: falling if bids
-                        self._storm_dir = sign
-                if (o.price - first) * sign > S_LEVELS:
-                    if len(oid) > len(self._max_id) or (len(oid) == len(self._max_id) and oid > self._max_id):
-                        self._max_id = oid
-                    continue
                 if sign < 0:
                     self._s_bid = o.price if not self._s_bid else self._s_bid + S_ALPHA * (o.price - self._s_bid)
                 else:
                     self._s_ask = o.price if not self._s_ask else self._s_ask + S_ALPHA * (o.price - self._s_ask)
                 if len(oid) > len(self._max_id) or (len(oid) == len(self._max_id) and oid > self._max_id):
                     self._max_id = oid
-
-    def _momentum(self, ts: int, mid: float) -> float:
-        """Mid now minus the mid MOM_LAG_US ago; starts or extends a storm when it reaches JUMP_MIN."""
-        mids = self._mids
-        if not mids or mids[-1][1] != mid:
-            mids.append((ts, mid))
-        while len(mids) > 1 and mids[1][0] <= ts - MOM_LAG_US:
-            mids.popleft()
-        mom = mid - mids[0][1]
-        if abs(mom) >= JUMP_MIN:
-            self._storm_until = ts + STORM_US
-            self._storm_dir = 1 if mom > 0 else -1
-        return mom
-
-    def _regime_step(self, ts: int, trades: list[Trade], wide: bool) -> None:
-        """Count taker events; once a second feed the filter and set the quoting for the regime."""
-        for t in trades:
-            if t.taker_owner == 'market':
-                self._ioc_n += 1
-                break
-        if ts < self._sec_next:
-            return
-        if self._sec_next == 0:
-            self._sec_next = ts + 1_000_000
-            self._far_n = self._ioc_n = 0
-            return
-        p = self._regime.update(self._far_n, self._ioc_n, 1 if wide else 0)
-        self._sec_next += 1_000_000
-        while self._sec_next <= ts:  # seconds without events
-            p = self._regime.update(0, 0, 1 if wide else 0)
-            self._sec_next += 1_000_000
-        self._far_n = self._ioc_n = 0
-        self._p_storm = p
-        if p > P_STORM:
-            self._edge_q, self._qsize, self._maxpos = EDGE_STORM, QUOTE_SIZE_STORM, MAX_POS_STORM
-        else:
-            self._edge_q, self._qsize, self._maxpos = EDGE, QUOTE_SIZE, MAX_POS
-
-    def _unwind(self) -> None:
-        """Close an overshoot past PENALTY_POS with one IOC, crossing UNWIND_SLIP ticks through the touch."""
-        if not UNWIND or self._unwind_id is not None or not self._bid:
-            return
-        inv = self._inventory
-        if inv > PENALTY_POS:
-            self._unwind_id = self._send(SELL, max(1, self._bid - UNWIND_SLIP), inv - UNWIND_TO, IOC)
-        elif inv < -PENALTY_POS:
-            self._unwind_id = self._send(BUY, self._ask + UNWIND_SLIP, -inv - UNWIND_TO, IOC)
-
-    def _flatten(self, bid: int, ask: int) -> None:
-        """In a storm, close a position held against its direction with one IOC at a time."""
-        if self._flat_id is not None:
-            return
-        inv = self._inventory
-        if self._storm_dir < 0 and inv > 0:
-            qty = min(inv, FLAT_SIZE, self._room(SELL))
-            if qty > 0:
-                self._flat_id = self._send(SELL, bid, qty, IOC)
-        elif self._storm_dir > 0 and inv < 0:
-            qty = min(-inv, FLAT_SIZE, self._room(BUY))
-            if qty > 0:
-                self._flat_id = self._send(BUY, ask, qty, IOC)
 
     def _fair(self, snapshot: OrderBookSnapshot, trades: list[Trade], bid: int, bid_qty: int, ask: int, ask_qty: int) -> float:
         """Fair price: the mid, moved toward the hidden price and by imbalance, aggressive flow and inventory.
@@ -568,7 +399,7 @@ class StormMarketMaker(BaseStrategy):
             pb = bid + 1
         else:
             pb = bid
-            while fair - pb < self._edge_q:
+            while fair - pb < EDGE:
                 pb -= 1
         if bid - fair >= EDGE_TAKE:
             pa = bid
@@ -576,7 +407,7 @@ class StormMarketMaker(BaseStrategy):
             pa = ask - 1
         else:
             pa = ask
-            while pa - fair < self._edge_q:
+            while pa - fair < EDGE:
                 pa += 1
         return pb, pa
 
@@ -606,15 +437,15 @@ class StormMarketMaker(BaseStrategy):
                 at_top += order[2]
             elif not order[5]:
                 kept.append((depth, order_id))
-        if top is None or top <= 0 or at_top >= self._qsize:
+        if top is None or top <= 0 or at_top >= QUOTE_SIZE:
             return
         room = self._room(side)
-        want = self._qsize - at_top
+        want = QUOTE_SIZE - at_top
         if room < min(want, MIN_NEW) and kept:
             kept.sort(reverse=True)
             order_id = kept[0][1]
             order = self._orders[order_id]
-            left = order[2] - max(min(want, self._maxpos) - max(room, 0), MIN_NEW)
+            left = order[2] - max(min(want, MAX_POS) - max(room, 0), MIN_NEW)
             if SHRINK and left >= MIN_NEW:
                 self.modify_order(order_id, left)  # keeps its queue place
                 order[5] = True
@@ -634,37 +465,15 @@ class StormMarketMaker(BaseStrategy):
         if bid is None or ask is None:
             return
         ts = snapshot.timestamp_us
-        self._now = ts
-        self._bid = bid
-        self._ask = ask
-        if REGIME:
-            self._regime_step(ts, trades, ask - bid > 1)
-        self._unwind()
         self._shadow_fill(ts)
         self._update_signals(ts, bid, bid_qty, ask, ask_qty)
         forecast = self._forecast()
         if TAKE_ENABLED:
             self._run_taker(forecast, bid, ask)
             self._shadow_step(ts, bid, ask)
-        storm = 0
-        mom = 0.0
-        if JUMP_GUARD:
-            mom = self._momentum(ts, (bid + ask) / 2)
-            if ts < self._storm_until:
-                storm = self._storm_dir
-                if FLATTEN:
-                    self._flatten(bid, ask)
         if MAKE_ENABLED:
             fair = self._fair(snapshot, trades, bid, bid_qty, ask, ask_qty)
-            if abs(mom) >= JUMP_MIN:
-                fair += K_MOM * mom
             pb, pa = self._targets(fair, bid, ask)
-            if storm < 0:
-                pb = None  # falling: no bids
-            elif storm > 0:
-                pa = None  # rising: no asks
-            if self._qsize <= 0:
-                pb = pa = None
             self._manage_ladder(BUY, pb, fair)
             self._manage_ladder(SELL, pa, fair)
 
@@ -679,7 +488,6 @@ class StormMarketMaker(BaseStrategy):
             order[2] = event.remaining_quantity
             if status is OrderStatus.FILLED:
                 self._forget(event.order_id, order[0])
-            self._unwind()
         elif status is OrderStatus.MODIFIED:
             order[2] = event.remaining_quantity
             order[5] = False
@@ -692,7 +500,3 @@ class StormMarketMaker(BaseStrategy):
         self._orders.pop(order_id, None)
         if self._taker_id == order_id:
             self._taker_id = None
-        if self._flat_id == order_id:
-            self._flat_id = None
-        if self._unwind_id == order_id:
-            self._unwind_id = None

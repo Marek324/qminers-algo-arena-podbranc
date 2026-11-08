@@ -1,6 +1,6 @@
 """Rebuild the price chart from a hold-probe PnL curve alone (pnl.csv only).
 
-strategies/simple_probe_mm.py buys HOLD lots once and holds them, so
+strategies/round2/simple_probe_mm.py buys HOLD lots once and holds them, so
 PnL(t) = HOLD * (price(t) - entry): the price relative to the entry is PnL / HOLD.
 Pass the entry price to get absolute ticks (it is the first trade's price; leave
 it at 0 for a relative chart). Works on a local run or an arena download.

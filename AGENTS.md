@@ -4,7 +4,7 @@ Qminers Algo Trade Arena hackathon. Our job is to write a **trading strategy**. 
 
 ## What you may change
 
-- `strategies/`: new strategy files. Copy `strategies/template_strategy.py` into a new file and work there.
+- `strategies/`: new strategy files. Copy `strategies/template_strategy.py` into a new file and work there. Strategies are sorted by the round they were built for: `strategies/round1/`, `strategies/round2/`, and `strategies/roundN/` for each new round. Put new work in the current round's folder. The top level holds only the two reference files. Oracles (`oracle_overfit_round1`, `dumb`) and probes (`simple_probe_mm`, `probe_*`) live in their round's folder too; never submit them. File names stay unique across folders, because the dashboard lists them by name. When you move a strategy, update the paths that reference it.
 - `tools/`: reusable building blocks (regressions, estimators, ...) that get **copied** into strategy files. See [Tools](#tools).
 - `docs/`, `AGENTS.md`, and helper scripts for analysis or parameter sweeps (e.g. `scripts/`, notebooks). These never get submitted.
 - `experiments/`: inactive experiments preserved for later, with their analysis, strategies, helpers and result summaries kept together. `experiments/inventory/` is the archived inventory-penalty/endgame study: its results are historical round-1 evidence, not active recommendations; re-run it on the new dataset before reconsidering it.

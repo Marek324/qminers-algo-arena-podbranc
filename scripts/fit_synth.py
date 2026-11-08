@@ -1,7 +1,7 @@
 """Compare synthetic tapes (scripts/gen_tape.py) with round1 on the stats that matter for PnL.
 
 Each arg is a set of gen_tape flags; every set is generated for --duration seconds, analysed with
-analysis.py, and backtested with strategies/imbalance_mm.py. Prints impact by IOC size (1s/5s mean),
+analysis.py, and backtested with strategies/round1/imbalance_mm.py. Prints impact by IOC size (1s/5s mean),
 maker markout, realized vol, touch depth and PnL per 12000s, next to round1.
 
   .venv/bin/python scripts/fit_synth.py "--kappa 0.02 --alpha 0.5" "--kappa 0.01 --alpha 0.6 --sigma 0.7"
@@ -14,7 +14,7 @@ from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 DUR = 1200
-STRAT = 'strategies/imbalance_mm.py'
+STRAT = 'strategies/round1/imbalance_mm.py'
 
 
 def stats(rep):

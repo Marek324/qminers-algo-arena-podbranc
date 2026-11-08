@@ -1,4 +1,4 @@
-"""Synthetic twin of a tape we can't see, from a hold-probe PnL curve (strategies/simple_probe_mm.py).
+"""Synthetic twin of a tape we can't see, from a hold-probe PnL curve (strategies/round2/simple_probe_mm.py).
 
 The probe holds HOLD lots, so PnL / HOLD + entry is the best bid each second; S ~ that + HALF (half spread).
 The generator (analysis/generator.py) then rebuilds a full order flow around that S path: the path's own jumps,

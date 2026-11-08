@@ -1,15 +1,16 @@
-"""Queue-front ladder: hmm_mm_v2 plus small orders pre-positioned behind the touch in quiet spells.
+"""hmm_mm_v2 with a jump-mixture Kalman update (Kimi's experiment A, research_notes/round2-deeper-strategy-research).
 
-In the quiet policy, besides the order at the target price, LADDER_QTY lots rest at each of the LADDER_LEVELS prices
-behind it. They are never moved while they stay within LADDER_LEVELS + 1 ticks of the target, so when the price comes
-to them they are at the front of the queue. Cancelled when they get ahead of the target or too deep, and in the
-volatile policy. They count against the MAX_POS worst case like every other order. Experiment, round 2.
+Each new-order reading y of S is explained either by ordinary diffusion (innovation variance P + R) or by a sparse
+extra jump in S (variance P + JMIX_J + R, prior weight JMIX_PI). Both Kalman updates are made, weighted by their
+posterior probability and collapsed back to one mean and variance (keeping the spread between the two means), so a
+coherent large displacement moves S at once instead of waiting for the regime HMM. JMIX_NUIS also weights the learned
+order-to-S gap updates by the ordinary probability, so a jump does not corrupt them. JMIX = False is hmm_mm_v2.
 
 Docstring of hmm_mm_v2.py:
 
 hmm_mm (JPod's) with two changes: a faster learned price-to-S gap and taker sweeps as bounds on S.
 
-Changes from strategies/hmm_mm.py, everything else identical:
+Changes from strategies/round2/hmm_mm.py, everything else identical:
 - C_LR 0.002 instead of 0.0005: the gap c between new orders and S is learned faster.
 - Taker sweep bounds: market takers are priced at round(S +- 1), so a taker buy that trades up to price p proves
   S >= p - 1 (with no slack); S_hat is pulled half way (SWEEP_W 0.5) to that bound when it sits below it. Sells
@@ -59,7 +60,7 @@ from simulator.models import (
 from simulator.strategy import BaseStrategy
 
 
-class LadderMMStrategy(BaseStrategy):
+class HmmMMJmixStrategy(BaseStrategy):
     QTY = 200
     MAX_POS = 100
     MIN_NEW = 10
@@ -93,8 +94,10 @@ class LadderMMStrategy(BaseStrategy):
     C_LR = 0.002         # weight of each order in the learned price-to-S gap c (hmm_mm: 0.0005)
     R_MIN = 0.1
     SLACK = 0.0          # taker sweep bound: ticks of slack below (above) the proven bound
-    LADDER_LEVELS = 2    # pre-positioned levels behind the target in the quiet policy (0: off)
-    LADDER_QTY = 30      # lots per ladder level
+    JMIX = True          # two-component (ordinary / jump) Kalman update
+    JMIX_J = 100.0       # variance of the sparse jump component (ticks^2)
+    JMIX_PI = 0.01       # prior probability that a reading carries a jump
+    JMIX_NUIS = False    # weight the gap c updates by the ordinary probability
     SWEEP_W = 0.5        # how far S_hat moves to the bound
     # flow
     FLOW_TAU_US = 100_000
@@ -136,7 +139,6 @@ class LadderMMStrategy(BaseStrategy):
         self.fc_n = 0.0
         self.fc_decay = math.exp(-self.FLOW_CHECK_STEP_US / self.FLOW_CHECK_TAU_US)
         self.flow_scale = 0.0 if self.FLOW_CHECK else 1.0
-        self.ladder: set[str] = set()
 
     def _cancel(self, oid: str) -> None:
         if oid not in self.cancel_sent:
@@ -224,11 +226,8 @@ class LadderMMStrategy(BaseStrategy):
                 pa = ba
                 while pa - fair < self.EDGE:
                     pa += 1
-            self._side(1, pb, self.LADDER_LEVELS * self.LADDER_QTY)
-            self._side(-1, pa, self.LADDER_LEVELS * self.LADDER_QTY)
-            if self.LADDER_LEVELS:
-                self._ladder(1, pb)
-                self._ladder(-1, pa)
+            self._side(1, pb)
+            self._side(-1, pa)
             return
 
         fair = mid + self.V_K_S * (self.s - mid) + self.V_K_FLOW * fx - self.V_K_INV * self.inv
@@ -277,14 +276,38 @@ class LadderMMStrategy(BaseStrategy):
         self.P += sig2 * max(dt, 0.0)
         # learned gap between new orders and S, per state
         d = -sign * (self.s - price)   # outward distance from S_hat
-        self.cq += self.C_LR * (1.0 - pv) * (d - self.cq)
-        self.cv += self.C_LR * pv * (d - self.cv)
-        c = (1.0 - pv) * self.cq + pv * self.cv
         r = 0.25 * ((1.0 - pv) * rq / ((1.0 - rq) ** 2) + pv * rv / ((1.0 - rv) ** 2)) + self.R_MIN
+        w0 = 1.0
+        if self.JMIX:
+            c = (1.0 - pv) * self.cq + pv * self.cv
+            e = price - sign * c - self.s
+            v0 = self.P + r
+            v1 = v0 + self.JMIX_J
+            l0 = (1.0 - self.JMIX_PI) * math.exp(-0.5 * e * e / v0) / math.sqrt(v0)
+            l1 = self.JMIX_PI * math.exp(-0.5 * e * e / v1) / math.sqrt(v1)
+            w0 = l0 / (l0 + l1) if l0 + l1 > 0 else 0.0
+        lr0 = self.C_LR * (w0 if self.JMIX_NUIS else 1.0)
+        self.cq += lr0 * (1.0 - pv) * (d - self.cq)
+        self.cv += lr0 * pv * (d - self.cv)
+        c = (1.0 - pv) * self.cq + pv * self.cv
         y = price - sign * c
-        k = self.P / (self.P + r)
-        self.s += k * (y - self.s)
-        self.P *= 1.0 - k
+        if not self.JMIX:
+            k = self.P / (self.P + r)
+            self.s += k * (y - self.s)
+            self.P *= 1.0 - k
+            return
+        e = y - self.s
+        P = self.P
+        k0 = P / (P + r)
+        k1 = (P + self.JMIX_J) / (P + self.JMIX_J + r)
+        m0 = self.s + k0 * e
+        m1 = self.s + k1 * e
+        p0 = (1.0 - k0) * P
+        p1 = (1.0 - k1) * (P + self.JMIX_J)
+        w1 = 1.0 - w0
+        m = w0 * m0 + w1 * m1
+        self.P = w0 * (p0 + (m0 - m) ** 2) + w1 * (p1 + (m1 - m) ** 2)
+        self.s = m
 
     def _scan_new(self, views, sign: int, now: int) -> None:
         """Feed market orders newer than max_id to the filters."""
@@ -323,29 +346,7 @@ class LadderMMStrategy(BaseStrategy):
             if o[0] == sign:
                 self._cancel(oid)
 
-    def _ladder(self, sign: int, target: int) -> None:
-        """Keep LADDER_QTY lots at each of the LADDER_LEVELS prices behind target (bids below, asks above)."""
-        resting = 0
-        prices = set()
-        for oid, o in self.orders.items():
-            if o[0] == sign:
-                resting += o[2]
-                if oid not in self.cancel_sent:
-                    prices.add(o[1])
-        for k in range(1, self.LADDER_LEVELS + 1):
-            p = target - sign * k
-            if p <= 0 or p in prices:
-                continue
-            q = min(self.LADDER_QTY, self.MAX_POS - sign * self.inv - resting)
-            if q < self.MIN_NEW:
-                return
-            side = Side.BUY if sign > 0 else Side.SELL
-            oid = self.send_order(OrderRequest(side=side, price=p, quantity=q, order_type=OrderType.LIMIT))
-            self.orders[oid] = [sign, p, q]
-            self.ladder.add(oid)
-            resting += q
-
-    def _side(self, sign: int, target: int, reserve: int = 0) -> None:
+    def _side(self, sign: int, target: int) -> None:
         resting = 0
         at_target = 0
         keep = []
@@ -353,14 +354,6 @@ class LadderMMStrategy(BaseStrategy):
             if o[0] != sign or oid in self.cancel_sent:
                 if o[0] == sign:
                     resting += o[2]
-                continue
-            if oid in self.ladder:
-                resting += o[2]
-                lb = (target - o[1]) * sign
-                if lb < 0 or lb > self.LADDER_LEVELS + 1:
-                    self._cancel(oid)
-                elif lb == 0:
-                    at_target += o[2]
                 continue
             behind = (target - o[1]) * sign
             if behind < 0 or behind > self.KEEP_LEVELS:
@@ -374,7 +367,7 @@ class LadderMMStrategy(BaseStrategy):
                 keep.append((behind, oid, o[2]))
         if at_target >= self.QTY:
             return
-        room = self.MAX_POS - sign * self.inv - resting - reserve  # reserve: room kept for the ladder
+        room = self.MAX_POS - sign * self.inv - resting
         want = self.QTY - at_target
         if room < min(want, self.MIN_NEW) and keep:
             keep.sort(reverse=True)
@@ -404,6 +397,5 @@ class LadderMMStrategy(BaseStrategy):
             self._drop(oid)
 
     def _drop(self, oid: str) -> None:
-        self.ladder.discard(oid)
         self.orders.pop(oid, None)
         self.cancel_sent.discard(oid)

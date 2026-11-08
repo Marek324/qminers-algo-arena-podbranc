@@ -91,7 +91,7 @@ where \(R\) is resting user quantity on the incoming order's side, \(q\) is its 
 
 ## 4. Prior evidence and why cap 100 remains the default
 
-The current maker sets `MAX_POS = 100` and sizes each side using inventory plus its open-order quantity so that the all-open-orders-fill worst case stays within that cap (`strategies/adaptive_mm.py:20-23`, `strategies/adaptive_mm.py:86-98`, `strategies/adaptive_mm.py:195-207`). This avoids penalty leakage and emergency-unwind feedback while preserving room for cancel/fill races through fill-based accounting (`strategies/adaptive_mm.py:393-431`, `strategies/adaptive_mm.py:453-465`).
+The current maker sets `MAX_POS = 100` and sizes each side using inventory plus its open-order quantity so that the all-open-orders-fill worst case stays within that cap (`strategies/round1/adaptive_mm.py:20-23`, `strategies/round1/adaptive_mm.py:86-98`, `strategies/round1/adaptive_mm.py:195-207`). This avoids penalty leakage and emergency-unwind feedback while preserving room for cancel/fill races through fill-based accounting (`strategies/round1/adaptive_mm.py:393-431`, `strategies/round1/adaptive_mm.py:453-465`).
 
 The direct prior evidence is negative. In the earlier round-1 research sequence, caps of 110–200 with an emergency IOC above 100 produced only 86k–207k after penalties of 166k–330k and were **worse even before the penalty**, so the idea was rejected (`docs/RESEARCH.md:294-310`, especially line 308). Those are historical results for that research variant, not new results for today's exact file, but they show that simply paying the fee does not automatically unlock profitable flow: extra capacity changes fill selection and unwind behavior too.
 

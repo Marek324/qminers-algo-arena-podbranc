@@ -121,14 +121,14 @@ def main(path: str) -> None:
     follow = move[3] - 2 * half_spread
     if follow > 1:
         print(f'  FLOW FOLLOWING: mid runs {move[3]:.1f} ticks in 3s after aggression, '
-              f'more than the round-trip spread. Start from strategies/flow_momentum.py')
+              f'more than the round-trip spread. Start from strategies/round1/flow_momentum.py')
     elif edge[5] > 0.2:
         print(f'  MARKET MAKING: resting fills earn {edge[5]:.2f} ticks/lot after 5s and flow is '
-              f'uninformed. Start from strategies/imbalance_mm.py')
+              f'uninformed. Start from strategies/round1/imbalance_mm.py')
     elif small_edge > 0.2:
         print(f'  MARKET MAKING, with care: average fill edge is small ({edge[5]:.2f}) but fills against '
               f'small aggressors earn {small_edge:.2f}; big aggressors are informed. Start from '
-              f'strategies/imbalance_mm.py and use the flow term (K_FLOW) so quotes step away after big orders')
+              f'strategies/round1/imbalance_mm.py and use the flow term (K_FLOW) so quotes step away after big orders')
     else:
         print('  UNCLEAR: neither edge is large. Check adverse selection by trade size and time of day.')
     if corr[0.5] > 0.2:

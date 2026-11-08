@@ -13,7 +13,7 @@ The diagnostic tells you which one, in about a minute.
 
 ```bash
 uv run python -m gzip -d data/<round>.csv.gz
-uv run exchange-simulator --strategy strategies/imbalance_mm.py --backtest data/<round>.csv --log-dir logs/<round>_old --no-logs
+uv run exchange-simulator --strategy strategies/round1/imbalance_mm.py --backtest data/<round>.csv --log-dir logs/<round>_old --no-logs
 ```
 
 A large loss means the market type changed, not that a parameter is off. Don't tune; go to step 1.
@@ -38,9 +38,9 @@ It replays the tape through the real engine without placing orders and prints fi
 
 ```
 mid move at 3 s  >  round-trip spread + 1 tick ?
-    yes -> FLOW FOLLOWING   start from strategies/flow_momentum.py
+    yes -> FLOW FOLLOWING   start from strategies/round1/flow_momentum.py
     no  -> maker edge at 5 s > 0.2 ticks/lot ?
-             yes -> MARKET MAKING   start from strategies/imbalance_mm.py
+             yes -> MARKET MAKING   start from strategies/round1/imbalance_mm.py
              no  -> neither is clean: split rows 2 and 3 by trade size and time of day
                     (big trades may be informed when small ones aren't)
 ```

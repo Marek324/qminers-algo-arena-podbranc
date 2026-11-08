@@ -33,7 +33,7 @@ def main() -> None:
     ap.add_argument('--name', required=True, help='params name in logs/generator/')
     ap.add_argument('--x-from', type=Path, default=None, help='replace X by the pooled gamma fit in this xfit JSON')
     ap.add_argument('--real', type=Path, default=None, help='also run the strategies on this real tape')
-    ap.add_argument('--strategies', default='strategies/imbalance_mm.py,strategies/adaptive_mm.py')
+    ap.add_argument('--strategies', default='strategies/round1/imbalance_mm.py,strategies/round1/adaptive_mm.py')
     ap.add_argument('--minutes', type=float, default=20)
     ap.add_argument('--n-train', type=int, default=4)
     ap.add_argument('--n-test', type=int, default=8)

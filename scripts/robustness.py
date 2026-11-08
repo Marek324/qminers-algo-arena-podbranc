@@ -1,7 +1,7 @@
 """Is a strategy robust or overfit? Backtests it in the real simulator on variants of every tape and reports how stable it is.
 
 usage:
-    uv run python scripts/robustness.py strategies/adaptive_mm.py                 # all tapes in data/
+    uv run python scripts/robustness.py strategies/round1/adaptive_mm.py                 # all tapes in data/
     uv run python scripts/robustness.py strategies/x.py data/a.csv data/b.csv --set QUOTE_SIZE=30 --sensitivity all
 
 Tests, per tape (plain .csv or .csv.gz in data/, deduplicated by name):

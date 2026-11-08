@@ -71,7 +71,7 @@ Signal quality on any tape now comes from the `analysis` package (`signals` sect
 - **A strong signal does not help passive quotes.** An earlier pure market-making version (since removed; the maker leg of `adaptive_mm.py` replaces it) was allowed to improve inside the touch on a strong signal. Fills went from about 70 to over 2,000 and it lost up to −33k. The improved quote is filled first by the aggressive orders that then move the price against it, which is the Market Maker's Dilemma in practice. Used only to back quotes off, every setting landed between −1.5k and +0.3k, all within noise. That is why the maker leg never quotes inside the touch.
 - **The pull filter almost never triggered** at `PULL_RATIO = 1.0`.
 - **Takeaway:** on this tape the edge comes from *taking* in the direction of the predicted move (the trend follower makes +1,878), not from passive quoting. Re-check all of this on real round data before deciding.
-- **`strategies/adaptive_mm.py`** (first called merged.py) was tuned with `scripts/sweep.py` on the two halves of the sample (with a split script, since removed). Results:
+- **`strategies/round1/adaptive_mm.py`** (first called merged.py) was tuned with `scripts/sweep.py` on the two halves of the sample (with a split script, since removed). Results:
   - Taker leg alone: about +10k at a 5-lot target. Maker leg alone: about 0. The maker adds nothing on top of the taker.
   - PnL grows roughly linearly with the target position: +12k at 5 lots, +40k at 20, +115k at 50, +175k at 80. That is what you'd expect from a trending synthetic tape, and it is **not** evidence for real rounds.
   - The imbalance term hurts as a taker signal (`IMB_WEIGHT` 3 → losses), so it is off.
@@ -325,7 +325,7 @@ So today's +43% on round 1 does **not** carry over to sample_v2. The gains explo
 
 ## Learning from the colleague's imbalance_mm.py (615k on round 1)
 
-`strategies/imbalance_mm.py` (JPod101010) makes 615,583 on round 1 against our 385,561. Its basis is in `docs/DATA_ANALYSIS.md`:
+`strategies/round1/imbalance_mm.py` (JPod101010) makes 615,583 on round 1 against our 385,561. Its basis is in `docs/DATA_ANALYSIS.md`:
 - The generator places limit orders around a **hidden fair price S** that random-walks, and the visible mid lags S by about 0.5 s.
 - An estimate Ŝ, the average of the bid-side and ask-side running means of newly arrived limit-order prices, explains 32% of the mid move 0.5 s ahead.
 
@@ -612,7 +612,7 @@ Our fills marked out against later market-vs-market trade prices (ticks per lot)
 - Inventory is not stuck long: |inventory| >= 90 for 56% of the time, split 30% long / 27% short. 200-lot passive quotes
   flip it from one cap to the other in a single fill, which leaves no room for the profitable crosses.
 - Passive fills by the size of the IOC that hit us: IOCs up to 150 lots +0.3 to +0.5 at 5 s, 400+ lots -0.5 to -0.8.
-- `strategies/adaptive_mm_r2.py` acts on this: IOC leg off, passive quotes only close inventory (PASSIVE_OPEN), excess
+- `strategies/round2/adaptive_mm_r2.py` acts on this: IOC leg off, passive quotes only close inventory (PASSIVE_OPEN), excess
   passive size is trimmed, separate passive inventory skew (K_INV_QUOTE). Untested.
 
 **"Buy the dip" does not fit this tape.** Variance ratio 60 s/1 s is 1.27 (trending), 1 s returns autocorrelate +0.03,
@@ -733,7 +733,7 @@ QUEUE_KEEP (300) ahead.
 ## regime_mm on round 2: where the remaining PnL is (2026-11-07)
 
 regime_mm.py (team): 448,818 on round2_public (269k/h); validation 1,032,909 over 12,000 s (310k/h), so it generalises.
-`strategies/regime_mm_kf.py` adds the Kalman filter in the volatile regime: 469,844. Tuning its other knobs (take
+`strategies/round2/regime_mm_kf.py` adds the Kalman filter in the volatile regime: 469,844. Tuning its other knobs (take
 edges, S_ALPHA, passive or earlier exits, max hold) only lost.
 
 **PnL by regime** (full-logs run, regime switches recorded): quiet 79% of the time 228k (passive 752k lots at +0.11/lot
@@ -758,7 +758,7 @@ the lookahead window (the next IOC sweep, new orders) that no estimate of S(t) c
 
 ## Estimating S on round 2: what was tried and what is left (2026-11-07)
 
-**Grid filter** (`tools/grid_price.py`, `strategies/regime_mm_grid.py`): exact Bayesian filter over (regime, S) with
+**Grid filter** (`tools/grid_price.py`, `strategies/round2/regime_mm_grid.py`): exact Bayesian filter over (regime, S) with
 order offsets fitted per regime from IOC prices (quiet X gamma(0.854, loc 0.025, θ 0.655), mean 0.59; volatile
 gamma(0.384, loc 2.594, θ 2.903) from a two-part mixture, since 62% of the orders regime_mm labels volatile look quiet).
 It lost: 262k with the grid in both regimes, 324k in the volatile regime only, against 470k for regime_mm_kf. Its
@@ -943,7 +943,7 @@ inventory settings cannot be tuned on generated tapes. The twin is trustworthy f
 share), not its order flow. No change to hmm_mm_v2. Next step for the twin: make the generated flow → price response
 match the real one (on round2_public a quiet flow weight of 0.8 beats 0.5), then repeat the screen.
 
-**Validation result of the twin-tuned test version** (`strategies/hmm_mm_v2_twin.py`: K_FLOW 0.5, K_INV 0.001,
+**Validation result of the twin-tuned test version** (`strategies/round2/hmm_mm_v2_twin.py`: K_FLOW 0.5, K_INV 0.001,
 EDGE_TAKE 0.35, SIG_V 15): **1,293,574** on arena validation against hmm_mm_v2's 1,291,224, a tie. The first twin
 predicted about +135k, round2_public about −16% (−83k on 515k); the real effect was +2k. Neither guide transferred:
 the twin overstated the gain and the half-length public tape overstated the loss. hmm_mm_v2 stays; settings that

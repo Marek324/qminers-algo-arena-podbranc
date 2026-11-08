@@ -10,9 +10,9 @@ Because the evaluation sandbox does not provide full public order book or trade 
 
 | Probe Strategy | Source File | Position Held | What It Extracts | Mathematical Reconstruction Formula |
 | :--- | :--- | :---: | :--- | :--- |
-| **Probe 1 (Bid / Mid Price)** | [`strategies/simple_probe_mm.py`](../strategies/simple_probe_mm.py) | **$+10\text{ lots}$** | **Best Bid $P_{\text{bid}}(t)$** & Macro Midprice | $P_{\text{bid}}(t) = 10,001.0 + \frac{\Pi_1(t)}{10.0}$ |
-| **Probe 2 (Ask / Spread Clock)** | [`strategies/probe_short_spread.py`](../strategies/probe_short_spread.py) | **$-10\text{ lots}$** | **Best Ask $P_{\text{ask}}(t)$** & Continuous Spread | $P_{\text{ask}}(t) = \frac{\text{Cash} - \Pi_2(t)}{10.0}$<br>$s(t) = P_{\text{ask}}(t) - P_{\text{bid}}(t)$ |
-| **Probe 3 (Depth / Queue Size)** | [`strategies/probe_depth_flow.py`](../strategies/probe_depth_flow.py) | **$+100\text{ lots}$** | **Queue Thickness $Q_{\text{touch}}(t)$** & Slippage | $\text{Slippage}(t) = P_{\text{bid}, 10}(t) - \frac{\text{Cash} + \Pi_3(t)}{100.0}$ |
+| **Probe 1 (Bid / Mid Price)** | [`strategies/round2/simple_probe_mm.py`](../strategies/round2/simple_probe_mm.py) | **$+10\text{ lots}$** | **Best Bid $P_{\text{bid}}(t)$** & Macro Midprice | $P_{\text{bid}}(t) = 10,001.0 + \frac{\Pi_1(t)}{10.0}$ |
+| **Probe 2 (Ask / Spread Clock)** | [`strategies/round2/probe_short_spread.py`](../strategies/round2/probe_short_spread.py) | **$-10\text{ lots}$** | **Best Ask $P_{\text{ask}}(t)$** & Continuous Spread | $P_{\text{ask}}(t) = \frac{\text{Cash} - \Pi_2(t)}{10.0}$<br>$s(t) = P_{\text{ask}}(t) - P_{\text{bid}}(t)$ |
+| **Probe 3 (Depth / Queue Size)** | [`strategies/round2/probe_depth_flow.py`](../strategies/round2/probe_depth_flow.py) | **$+100\text{ lots}$** | **Queue Thickness $Q_{\text{touch}}(t)$** & Slippage | $\text{Slippage}(t) = P_{\text{bid}, 10}(t) - \frac{\text{Cash} + \Pi_3(t)}{100.0}$ |
 
 ---
 
@@ -21,9 +21,9 @@ Because the evaluation sandbox does not provide full public order book or trade 
 ### A. Submitting to Arena Sandbox
 1. Go to **arena.qminers.com** $\to$ **Dashboard** $\to$ **Submit strategy**.
 2. Select one of the probe files:
-   - To get the **Best Ask & Continuous Spread**: upload `strategies/probe_short_spread.py`.
-   - To get the **Queue Thickness & Book Depth**: upload `strategies/probe_depth_flow.py`.
-   - To get the **Baseline Bid & Price**: upload `strategies/simple_probe_mm.py`.
+   - To get the **Best Ask & Continuous Spread**: upload `strategies/round2/probe_short_spread.py`.
+   - To get the **Queue Thickness & Book Depth**: upload `strategies/round2/probe_depth_flow.py`.
+   - To get the **Baseline Bid & Price**: upload `strategies/round2/simple_probe_mm.py`.
 3. Submit and wait for evaluation completion. All three probes execute exactly 1 trade at $t = 0.005\text{s}$ and hold passively, guaranteeing **$0.00 breach penalty**.
 
 ### B. Downloading Results

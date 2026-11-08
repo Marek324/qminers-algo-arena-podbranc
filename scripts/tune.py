@@ -5,7 +5,7 @@ only if the total PnL rises by at least --min-gain (fraction of the current tota
 current one on at least --min-wins chunks. Passes repeat until nothing changes. Prints a log and the final
 settings; writes the tuned copy to --out.
 
-usage: .venv/bin/python scripts/tune.py strategies/regime_mm.py data/q/r2_q1.csv data/q/r2_q2.csv \
+usage: .venv/bin/python scripts/tune.py strategies/round2/regime_mm.py data/q/r2_q1.csv data/q/r2_q2.csv \
            data/q/r2_q3.csv data/q/r2_q4.csv --grid scripts/tune_grid_regime.txt --out strategies/regime_mm_tuned.py
 grid file: one line per constant, `NAME = v1, v2, v3` (the current value is added automatically).
 """

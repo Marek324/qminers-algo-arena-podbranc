@@ -1,4 +1,4 @@
-"""Jump-guarded market maker: strategies/adaptive_mm_plus.py plus a guard against jumps in the hidden price.
+"""Jump-guarded market maker: strategies/round1/adaptive_mm_plus.py plus a guard against jumps in the hidden price.
 
 Round 2 adds jumps to S: about one episode a minute, median 13 ticks, up to 100, building over ~4 s and never
 reverting (docs/DATA_ANALYSIS.md). Quoting at the touch through one buys all the way down and pins inventory at the
@@ -8,7 +8,7 @@ are pulled for STORM_US, and a position against the move is flattened with IOCs.
 
 Original docstring of adaptive_mm_plus.py:
 
-Adaptive market maker, upgraded: strategies/adaptive_mm.py (David's) plus room-freeing by shrinking.
+Adaptive market maker, upgraded: strategies/round1/adaptive_mm.py (David's) plus room-freeing by shrinking.
 
 Changes from adaptive_mm.py (everything else is identical; see its docstring below):
 - SHRINK: when the target order needs room, the deepest kept order is shrunk with modify_order by the lots needed
@@ -33,7 +33,7 @@ Maker leg (the money on round 1): quotes passively around a fair price.
   imbalance, recent aggressive volume and inventory. The tape's limit orders are placed around a
   hidden price that random-walks, and the visible mid lags it by about 0.5 s; the estimate is the
   average of running means of newly arrived limit-order prices on each side. (Fair-value design
-  and hidden-price estimate from strategies/imbalance_mm.py.)
+  and hidden-price estimate from strategies/round1/imbalance_mm.py.)
 - Quote prices: the best price that keeps at least EDGE ticks from fair; cross the spread when fair
   is EDGE_TAKE beyond the opposite best price; inside a 2+ tick spread only with EDGE_IN of edge.
 - Orders are as large as the position cap allows. An order the target moves a tick away from is
@@ -55,8 +55,8 @@ misleads the quotes (control tapes: about -84k per hour). So its weight is scale
 has predicted the mid 0.5 s ahead over roughly the last 5 minutes, and drops to 0 when it hasn't.
 That cut the control-tape losses to -6k ... -24k with no cost on round 1.
 
-Run:  uv run exchange-simulator --strategy strategies/adaptive_mm.py --backtest data/round1.csv --log-dir logs/adaptive --no-logs
-Tune: python3 -I scripts/sweep.py strategies/adaptive_mm.py data/round1.csv -p EDGE=0.25,0.3,0.35
+Run:  uv run exchange-simulator --strategy strategies/round1/adaptive_mm.py --backtest data/round1.csv --log-dir logs/adaptive --no-logs
+Tune: python3 -I scripts/sweep.py strategies/round1/adaptive_mm.py data/round1.csv -p EDGE=0.25,0.3,0.35
 Experiment history: docs/RESEARCH.md.
 """
 from __future__ import annotations

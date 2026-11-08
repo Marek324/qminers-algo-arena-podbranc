@@ -1,21 +1,21 @@
-"""hmm_mm_v2 with a jump-mixture Kalman update (Kimi's experiment A, research_notes/round2-deeper-strategy-research).
+"""hmm_mm plus a far-order trigger and controlled inventory overshoot on big jumps (all off by default).
 
-Each new-order reading y of S is explained either by ordinary diffusion (innovation variance P + R) or by a sparse
-extra jump in S (variance P + JMIX_J + R, prior weight JMIX_PI). Both Kalman updates are made, weighted by their
-posterior probability and collapsed back to one mean and variance (keeping the spread between the two means), so a
-coherent large displacement moves S at once instead of waiting for the regime HMM. JMIX_NUIS also weights the learned
-order-to-S gap updates by the ordinary probability, so a jump does not corrupt them. JMIX = False is hmm_mm_v2.
-
-Docstring of hmm_mm_v2.py:
-
-hmm_mm (JPod's) with two changes: a faster learned price-to-S gap and taker sweeps as bounds on S.
-
-Changes from strategies/hmm_mm.py, everything else identical:
-- C_LR 0.002 instead of 0.0005: the gap c between new orders and S is learned faster.
-- Taker sweep bounds: market takers are priced at round(S +- 1), so a taker buy that trades up to price p proves
-  S >= p - 1 (with no slack); S_hat is pulled half way (SWEEP_W 0.5) to that bound when it sits below it. Sells
-  mirror it.
-Round 2 training tape: 515,547 vs 502,258 (both halves up: +2.6k, +10.6k; within noise, se ~26k).
+Additions to strategies/round2/hmm_mm.py (JPod's), each behind a switch:
+- FAR_TRIGGER: one new market limit order FAR_TRIGGER or more ticks behind the opposite best price means S has just
+  jumped away from the book; the volatile policy is forced for FORCE_US at once instead of waiting for the HMM.
+- V_RECYCLE: in the volatile policy, once the book has caught up with fair (best bid >= fair - V_RECYCLE for a long
+  position), close the position with an IOC at the touch to free room for the next sweep (< 0: off).
+- CALM_SWEEP: in the quiet policy, when fair is CALM_SWEEP or more ticks through the opposite best, sweep every level
+  up to fair - EDGE_TAKE instead of crossing at the best price only (0: off).
+- EDGE_PV (Cartea-Jaimungal style): quiet quotes keep EDGE + EDGE_PV * p_vol from fair, so they back off as the
+  volatile probability builds instead of all at once at P_ON (0: off).
+- ALPHA_PULL: quiet policy, when |fair - mid| > ALPHA_PULL the side the signal points against is not quoted (0: off).
+- SWEEP_BOUND: market taker orders are priced at round(S +- 1), so a taker buy that trades up to price p proves
+  S >= p - 1.5 (a sell down to p: S <= p + 1.5). After each such event S_hat is pulled toward the bound minus SLACK
+  with weight SWEEP_W when it sits on the wrong side of it; the variance is not reduced (off by default).
+- OVER_POS: when the volatile fair is OVER_EDGE or more ticks through the stale book, the sweep may take inventory up
+  to OVER_POS (> 100, the exchange charges 10,000 per second above 100). Once that side no longer has V_EDGE_TAKE of
+  edge, any |inventory| above MAX_POS is closed by one IOC UNWIND_SLIP ticks through the touch.
 
 Docstring of hmm_mm.py:
 
@@ -60,7 +60,7 @@ from simulator.models import (
 from simulator.strategy import BaseStrategy
 
 
-class HmmMMJmixStrategy(BaseStrategy):
+class HmmMMPlusStrategy(BaseStrategy):
     QTY = 200
     MAX_POS = 100
     MIN_NEW = 10
@@ -80,6 +80,21 @@ class HmmMMJmixStrategy(BaseStrategy):
     V_K_FLOW = 1.2
     V_K_INV = 0.0
     P_ON = 0.5           # p_vol above this: volatile policy
+    # additions
+    FAR_TRIGGER = 0      # new order this many ticks behind the opposite best forces the volatile policy (0: off)
+    FORCE_US = 2_000_000
+    OVER_POS = 100       # inventory cap for sweeps with OVER_EDGE of edge (100: off)
+    OVER_EDGE = 5.0
+    UNWIND_SLIP = 1
+    UNWIND_GAP = -1.0    # unwind an overshoot only once the touch is within this of fair, or after MAX_OVER_US (< 0: old rule)
+    MAX_OVER_US = 1_000_000
+    V_RECYCLE = -1.0     # close a volatile position by IOC once the touch is within this of fair (< 0: off)
+    CALM_SWEEP = 0.0     # quiet policy: sweep stale levels when fair is this far through the best (0: off)
+    EDGE_PV = 0.0        # quiet quote edge grows by this times p_vol (0: off)
+    ALPHA_PULL = 0.0     # quiet policy: no quote against a signal stronger than this (0: off)
+    SWEEP_BOUND = False  # use market taker sweeps as bounds on S
+    SLACK = 0.5          # ticks of slack below (above) the proven bound
+    SWEEP_W = 1.0        # how far S_hat moves to the bound (1: all the way)
     # HMM
     H_N_Q0 = 1.0         # start mean of n (half ticks beyond the first) in the quiet state
     H_N_V0 = 2.7         # and in the volatile state
@@ -91,14 +106,8 @@ class HmmMMJmixStrategy(BaseStrategy):
     SIG_Q = 0.5          # ticks / sqrt(s) in the quiet state
     SIG_V = 10.0          # in the volatile state
     KF_LEVELS = 1000     # use new orders up to this many ticks behind their best price
-    C_LR = 0.002         # weight of each order in the learned price-to-S gap c (hmm_mm: 0.0005)
+    C_LR = 0.0005        # weight of each order in the learned price-to-S gap c
     R_MIN = 0.1
-    SLACK = 0.0          # taker sweep bound: ticks of slack below (above) the proven bound
-    JMIX = True          # two-component (ordinary / jump) Kalman update
-    JMIX_J = 100.0       # variance of the sparse jump component (ticks^2)
-    JMIX_PI = 0.01       # prior probability that a reading carries a jump
-    JMIX_NUIS = False    # weight the gap c updates by the ordinary probability
-    SWEEP_W = 0.5        # how far S_hat moves to the bound
     # flow
     FLOW_TAU_US = 100_000
     DEPTH_EMA = 0.001
@@ -139,6 +148,12 @@ class HmmMMJmixStrategy(BaseStrategy):
         self.fc_n = 0.0
         self.fc_decay = math.exp(-self.FLOW_CHECK_STEP_US / self.FLOW_CHECK_TAU_US)
         self.flow_scale = 0.0 if self.FLOW_CHECK else 1.0
+        self.force_until = 0
+        self.bb = 0
+        self.ba = 0
+        self.unwind_id = None
+        self.recycle_id = None
+        self.over_since = 0
 
     def _cancel(self, oid: str) -> None:
         if oid not in self.cancel_sent:
@@ -169,6 +184,7 @@ class HmmMMJmixStrategy(BaseStrategy):
             return
         mid = (bb + ba) / 2
         self.mid = mid
+        self.bb, self.ba = bb, ba
         now = snapshot.timestamp_us
         if not self.s:
             self.s = mid
@@ -192,14 +208,15 @@ class HmmMMJmixStrategy(BaseStrategy):
                         hi = tr.price
                 elif lo == 0 or tr.price < lo:
                     lo = tr.price
-        if hi:
-            b = hi - 1.0 - self.SLACK
-            if self.s < b:
-                self.s += self.SWEEP_W * (b - self.s)
-        if lo:
-            b = lo + 1.0 + self.SLACK
-            if self.s > b:
-                self.s += self.SWEEP_W * (b - self.s)
+        if self.SWEEP_BOUND:
+            if hi:
+                b = hi - 1.0 - self.SLACK
+                if self.s < b:
+                    self.s += self.SWEEP_W * (b - self.s)
+            if lo:
+                b = lo + 1.0 + self.SLACK
+                if self.s > b:
+                    self.s += self.SWEEP_W * (b - self.s)
         half = (bq + aq) / 2
         self.depth = half if self.depth == 0 else self.depth + self.DEPTH_EMA * (half - self.depth)
         x = self.flow / self.depth
@@ -208,31 +225,74 @@ class HmmMMJmixStrategy(BaseStrategy):
         fx = self.flow_scale * x
         imb = (bq - aq) / (bq + aq)
 
-        if self.pv < self.P_ON:
+        if abs(self.inv) <= self.MAX_POS:
+            self.over_since = 0
+        elif not self.over_since:
+            self.over_since = now
+        if self.OVER_POS > self.MAX_POS and self.unwind_id is None and abs(self.inv) > self.MAX_POS:
+            vfair = mid + self.V_K_S * (self.s - mid) + self.V_K_FLOW * fx
+            late = now - self.over_since >= self.MAX_OVER_US
+            if self.UNWIND_GAP >= 0:
+                # calculated: hold the overshoot until the book has caught up with fair (or too long over the limit)
+                long_ok = late or bb >= vfair - self.UNWIND_GAP
+                short_ok = late or ba <= vfair + self.UNWIND_GAP
+            else:
+                long_ok = vfair - ba < self.V_EDGE_TAKE
+                short_ok = bb - vfair < self.V_EDGE_TAKE
+            if self.inv > 0 and long_ok:
+                q = self.inv - self.MAX_POS
+                self.unwind_id = self.send_order(OrderRequest(side=Side.SELL, price=max(1, bb - self.UNWIND_SLIP),
+                                                              quantity=q, order_type=OrderType.IOC))
+                self.orders[self.unwind_id] = [-1, bb - self.UNWIND_SLIP, q]
+            elif self.inv < 0 and short_ok:
+                q = -self.inv - self.MAX_POS
+                self.unwind_id = self.send_order(OrderRequest(side=Side.BUY, price=ba + self.UNWIND_SLIP,
+                                                              quantity=q, order_type=OrderType.IOC))
+                self.orders[self.unwind_id] = [1, ba + self.UNWIND_SLIP, q]
+        if self.pv < self.P_ON and now >= self.force_until:
             fair = mid + self.K_S * (self.s - mid) + self.K_IMB * imb + self.K_FLOW * fx - self.K_INV * self.inv
-            if fair - ba >= self.EDGE_TAKE:
+            if self.CALM_SWEEP and fair - ba >= self.CALM_SWEEP:
+                pb = math.floor(fair - self.EDGE_TAKE)
+            elif fair - ba >= self.EDGE_TAKE:
                 pb = ba
             elif ba - bb >= 2 and fair - (bb + 1) >= self.EDGE_IN:
                 pb = bb + 1
             else:
                 pb = bb
-                while fair - pb < self.EDGE:
+                edge = self.EDGE + self.EDGE_PV * self.pv
+                while fair - pb < edge:
                     pb -= 1
-            if bb - fair >= self.EDGE_TAKE:
+            if self.CALM_SWEEP and bb - fair >= self.CALM_SWEEP:
+                pa = math.ceil(fair + self.EDGE_TAKE)
+            elif bb - fair >= self.EDGE_TAKE:
                 pa = bb
             elif ba - bb >= 2 and (ba - 1) - fair >= self.EDGE_IN:
                 pa = ba - 1
             else:
                 pa = ba
-                while pa - fair < self.EDGE:
+                edge = self.EDGE + self.EDGE_PV * self.pv
+                while pa - fair < edge:
                     pa += 1
-            self._side(1, pb)
-            self._side(-1, pa)
+            if self.ALPHA_PULL and fair - mid > self.ALPHA_PULL and pa > bb:
+                self._clear(-1)  # signal up: do not offer
+            else:
+                self._side(-1, pa)
+            if self.ALPHA_PULL and mid - fair > self.ALPHA_PULL and pb < ba:
+                self._clear(1)   # signal down: do not bid
+            else:
+                self._side(1, pb)
             return
 
         fair = mid + self.V_K_S * (self.s - mid) + self.V_K_FLOW * fx - self.V_K_INV * self.inv
+        if self.V_RECYCLE >= 0 and self.recycle_id is None and self.inv:
+            if self.inv > 0 and bb >= fair - self.V_RECYCLE and fair - ba < self.V_EDGE_TAKE:
+                self.recycle_id = self.send_order(OrderRequest(side=Side.SELL, price=bb, quantity=self.inv, order_type=OrderType.IOC))
+                self.orders[self.recycle_id] = [-1, bb, self.inv]
+            elif self.inv < 0 and ba <= fair + self.V_RECYCLE and bb - fair < self.V_EDGE_TAKE:
+                self.recycle_id = self.send_order(OrderRequest(side=Side.BUY, price=ba, quantity=-self.inv, order_type=OrderType.IOC))
+                self.orders[self.recycle_id] = [1, ba, -self.inv]
         if fair - ba >= self.V_EDGE_TAKE:
-            self._side(1, math.floor(fair - self.V_EDGE_TAKE))
+            self._side(1, math.floor(fair - self.V_EDGE_TAKE), self.OVER_POS if fair - ba >= self.OVER_EDGE else self.MAX_POS)
         elif self.inv < 0:
             pb = bb
             while fair - pb < self.V_EXIT_EDGE:
@@ -241,7 +301,7 @@ class HmmMMJmixStrategy(BaseStrategy):
         else:
             self._clear(1)
         if bb - fair >= self.V_EDGE_TAKE:
-            self._side(-1, math.ceil(fair + self.V_EDGE_TAKE))
+            self._side(-1, math.ceil(fair + self.V_EDGE_TAKE), self.OVER_POS if bb - fair >= self.OVER_EDGE else self.MAX_POS)
         elif self.inv > 0:
             pa = ba
             while pa - fair < self.V_EXIT_EDGE:
@@ -276,38 +336,14 @@ class HmmMMJmixStrategy(BaseStrategy):
         self.P += sig2 * max(dt, 0.0)
         # learned gap between new orders and S, per state
         d = -sign * (self.s - price)   # outward distance from S_hat
-        r = 0.25 * ((1.0 - pv) * rq / ((1.0 - rq) ** 2) + pv * rv / ((1.0 - rv) ** 2)) + self.R_MIN
-        w0 = 1.0
-        if self.JMIX:
-            c = (1.0 - pv) * self.cq + pv * self.cv
-            e = price - sign * c - self.s
-            v0 = self.P + r
-            v1 = v0 + self.JMIX_J
-            l0 = (1.0 - self.JMIX_PI) * math.exp(-0.5 * e * e / v0) / math.sqrt(v0)
-            l1 = self.JMIX_PI * math.exp(-0.5 * e * e / v1) / math.sqrt(v1)
-            w0 = l0 / (l0 + l1) if l0 + l1 > 0 else 0.0
-        lr0 = self.C_LR * (w0 if self.JMIX_NUIS else 1.0)
-        self.cq += lr0 * (1.0 - pv) * (d - self.cq)
-        self.cv += lr0 * pv * (d - self.cv)
+        self.cq += self.C_LR * (1.0 - pv) * (d - self.cq)
+        self.cv += self.C_LR * pv * (d - self.cv)
         c = (1.0 - pv) * self.cq + pv * self.cv
+        r = 0.25 * ((1.0 - pv) * rq / ((1.0 - rq) ** 2) + pv * rv / ((1.0 - rv) ** 2)) + self.R_MIN
         y = price - sign * c
-        if not self.JMIX:
-            k = self.P / (self.P + r)
-            self.s += k * (y - self.s)
-            self.P *= 1.0 - k
-            return
-        e = y - self.s
-        P = self.P
-        k0 = P / (P + r)
-        k1 = (P + self.JMIX_J) / (P + self.JMIX_J + r)
-        m0 = self.s + k0 * e
-        m1 = self.s + k1 * e
-        p0 = (1.0 - k0) * P
-        p1 = (1.0 - k1) * (P + self.JMIX_J)
-        w1 = 1.0 - w0
-        m = w0 * m0 + w1 * m1
-        self.P = w0 * (p0 + (m0 - m) ** 2) + w1 * (p1 + (m1 - m) ** 2)
-        self.s = m
+        k = self.P / (self.P + r)
+        self.s += k * (y - self.s)
+        self.P *= 1.0 - k
 
     def _scan_new(self, views, sign: int, now: int) -> None:
         """Feed market orders newer than max_id to the filters."""
@@ -320,6 +356,10 @@ class HmmMMJmixStrategy(BaseStrategy):
                 continue
             oid = o.order_id
             if len(oid) > lm or (len(oid) == lm and oid > mx):
+                if self.FAR_TRIGGER and self.ba:
+                    behind = (self.ba - 1 - o.price) if sign < 0 else (o.price - self.bb - 1)
+                    if behind >= self.FAR_TRIGGER:
+                        self.force_until = now + self.FORCE_US
                 self._observe(sign, o.price, (o.price - first) * sign <= self.KF_LEVELS, now)
                 if len(oid) > len(new_max) or (len(oid) == len(new_max) and oid > new_max):
                     new_max = oid
@@ -346,7 +386,7 @@ class HmmMMJmixStrategy(BaseStrategy):
             if o[0] == sign:
                 self._cancel(oid)
 
-    def _side(self, sign: int, target: int) -> None:
+    def _side(self, sign: int, target: int, cap: int = 0) -> None:
         resting = 0
         at_target = 0
         keep = []
@@ -367,7 +407,7 @@ class HmmMMJmixStrategy(BaseStrategy):
                 keep.append((behind, oid, o[2]))
         if at_target >= self.QTY:
             return
-        room = self.MAX_POS - sign * self.inv - resting
+        room = (cap or self.MAX_POS) - sign * self.inv - resting
         want = self.QTY - at_target
         if room < min(want, self.MIN_NEW) and keep:
             keep.sort(reverse=True)
@@ -397,5 +437,9 @@ class HmmMMJmixStrategy(BaseStrategy):
             self._drop(oid)
 
     def _drop(self, oid: str) -> None:
+        if oid == self.unwind_id:
+            self.unwind_id = None
+        if oid == self.recycle_id:
+            self.recycle_id = None
         self.orders.pop(oid, None)
         self.cancel_sent.discard(oid)

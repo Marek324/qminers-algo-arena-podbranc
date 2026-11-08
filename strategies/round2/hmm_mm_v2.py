@@ -1,17 +1,6 @@
-"""Jump sniper: hmm_mm_v2 plus deliberate, short inventory overshoots on big jumps in the hidden price.
+"""hmm_mm (JPod's) with two changes: a faster learned price-to-S gap and taker sweeps as bounds on S.
 
-The exchange charges 10,000 per second while |inventory| > 100, the same for 101 lots as for 1000. So overshoot rarely
-and big: when a new market limit order lands SNIPE_FAR or more ticks behind the opposite best price, S has just jumped
-that far (round 2: the mid then closes 95-100% of the gap within 2 s). The stale side of the book is swept at once by
-one IOC, down to the new S +- SNIPE_MARGIN, up to SNIPE_POS lots of position (the 1000-lot hard limit counts resting
-orders). The overshoot is closed by IOC once the book has caught up (opposite best within UNWIND_GAP of the new S)
-or after MAX_OVER_US. Between snipes this is hmm_mm_v2 unchanged.
-
-Docstring of hmm_mm_v2.py:
-
-hmm_mm (JPod's) with two changes: a faster learned price-to-S gap and taker sweeps as bounds on S.
-
-Changes from strategies/hmm_mm.py, everything else identical:
+Changes from strategies/round2/hmm_mm.py, everything else identical:
 - C_LR 0.002 instead of 0.0005: the gap c between new orders and S is learned faster.
 - Taker sweep bounds: market takers are priced at round(S +- 1), so a taker buy that trades up to price p proves
   S >= p - 1 (with no slack); S_hat is pulled half way (SWEEP_W 0.5) to that bound when it sits below it. Sells
@@ -61,7 +50,7 @@ from simulator.models import (
 from simulator.strategy import BaseStrategy
 
 
-class SniperMMStrategy(BaseStrategy):
+class HmmMMV2Strategy(BaseStrategy):
     QTY = 200
     MAX_POS = 100
     MIN_NEW = 10
@@ -95,15 +84,6 @@ class SniperMMStrategy(BaseStrategy):
     C_LR = 0.002         # weight of each order in the learned price-to-S gap c (hmm_mm: 0.0005)
     R_MIN = 0.1
     SLACK = 0.0          # taker sweep bound: ticks of slack below (above) the proven bound
-    # jump sniper
-    SNIPE_FAR = 20       # a new order this many ticks behind the opposite best triggers a snipe (0: off)
-    SNIPE_POS = 1000     # position the snipe may reach (hard limit 1000 incl. resting orders)
-    SNIPE_MARGIN = 3.0   # sweep stale levels at least this far through the new S
-    X_MEAN = 0.8         # a new order sits about this far outside S
-    UNWIND_GAP = 2.0     # close the overshoot once the opposite best is within this of the new S
-    MAX_OVER_US = 1_500_000
-    SNIPE_COOLDOWN_US = 1_000_000
-    UNWIND_SLIP = 2
     SWEEP_W = 0.5        # how far S_hat moves to the bound
     # flow
     FLOW_TAU_US = 100_000
@@ -145,13 +125,6 @@ class SniperMMStrategy(BaseStrategy):
         self.fc_n = 0.0
         self.fc_decay = math.exp(-self.FLOW_CHECK_STEP_US / self.FLOW_CHECK_TAU_US)
         self.flow_scale = 0.0 if self.FLOW_CHECK else 1.0
-        self.bb = 0
-        self.ba = 0
-        self.snipe_s = 0.0       # new S of the last snipe
-        self.snipe_t = -10**12   # its time
-        self.snipe_id = None
-        self.unwind_id = None
-        self.over_since = 0
 
     def _cancel(self, oid: str) -> None:
         if oid not in self.cancel_sent:
@@ -182,9 +155,7 @@ class SniperMMStrategy(BaseStrategy):
             return
         mid = (bb + ba) / 2
         self.mid = mid
-        self.bb, self.ba = bb, ba
         now = snapshot.timestamp_us
-        self._unwind(now, bb, ba)
         if not self.s:
             self.s = mid
             self.kf_t = now
@@ -311,65 +282,10 @@ class SniperMMStrategy(BaseStrategy):
                 continue
             oid = o.order_id
             if len(oid) > lm or (len(oid) == lm and oid > mx):
-                if self.SNIPE_FAR and self.ba:
-                    behind = (self.ba - 1 - o.price) if sign < 0 else (o.price - self.bb - 1)
-                    if behind >= self.SNIPE_FAR:
-                        self._snipe(sign, o.price, now)
                 self._observe(sign, o.price, (o.price - first) * sign <= self.KF_LEVELS, now)
                 if len(oid) > len(new_max) or (len(oid) == len(new_max) and oid > new_max):
                     new_max = oid
         self.max_id = new_max
-
-    def _snipe(self, sign: int, price: int, now: int) -> None:
-        """A market order far behind the touch: S jumped. Sweep the stale opposite side with one IOC.
-
-        sign -1: a buy far below the best bid side means S fell, so the bids above the new S are stale: sell into them.
-        sign +1: a sell far above means S rose: buy the stale asks.
-        """
-        if self.snipe_id is not None or now - self.snipe_t < self.SNIPE_COOLDOWN_US:
-            return
-        if sign < 0:   # S fell to about price + X_MEAN
-            s_new = price + self.X_MEAN
-            limit_px = math.ceil(s_new + self.SNIPE_MARGIN)
-            if self.bb < limit_px:
-                return
-            resting = sum(o[2] for o in self.orders.values() if o[0] < 0)
-            q = min(self.SNIPE_POS + self.inv, 1000 + self.inv - resting)
-            side, sg = Side.SELL, -1
-        else:          # S rose to about price - X_MEAN
-            s_new = price - self.X_MEAN
-            limit_px = math.floor(s_new - self.SNIPE_MARGIN)
-            if self.ba > limit_px:
-                return
-            resting = sum(o[2] for o in self.orders.values() if o[0] > 0)
-            q = min(self.SNIPE_POS - self.inv, 1000 - self.inv - resting)
-            side, sg = Side.BUY, 1
-        if q < self.MIN_NEW:
-            return
-        self.snipe_id = self.send_order(OrderRequest(side=side, price=limit_px, quantity=q, order_type=OrderType.IOC))
-        self.orders[self.snipe_id] = [sg, limit_px, q]
-        self.snipe_s = s_new
-        self.snipe_t = now
-
-    def _unwind(self, now: int, bb: int, ba: int) -> None:
-        """Close |inventory| above MAX_POS once the book has caught up with the snipe's S (or after MAX_OVER_US)."""
-        inv = self.inv
-        if abs(inv) <= self.MAX_POS:
-            self.over_since = 0
-            return
-        if not self.over_since:
-            self.over_since = now
-        if self.unwind_id is not None:
-            return
-        late = now - self.over_since >= self.MAX_OVER_US
-        if inv > 0 and (late or bb >= self.snipe_s - self.UNWIND_GAP):
-            q = inv - self.MAX_POS
-            self.unwind_id = self.send_order(OrderRequest(side=Side.SELL, price=max(1, bb - self.UNWIND_SLIP), quantity=q, order_type=OrderType.IOC))
-            self.orders[self.unwind_id] = [-1, bb - self.UNWIND_SLIP, q]
-        elif inv < 0 and (late or ba <= self.snipe_s + self.UNWIND_GAP):
-            q = -inv - self.MAX_POS
-            self.unwind_id = self.send_order(OrderRequest(side=Side.BUY, price=ba + self.UNWIND_SLIP, quantity=q, order_type=OrderType.IOC))
-            self.orders[self.unwind_id] = [1, ba + self.UNWIND_SLIP, q]
 
     def _flow_check(self, now: int, x: float, mid: float) -> None:
         self.fc_next = now + self.FLOW_CHECK_STEP_US
@@ -443,9 +359,5 @@ class SniperMMStrategy(BaseStrategy):
             self._drop(oid)
 
     def _drop(self, oid: str) -> None:
-        if oid == self.snipe_id:
-            self.snipe_id = None
-        if oid == self.unwind_id:
-            self.unwind_id = None
         self.orders.pop(oid, None)
         self.cancel_sent.discard(oid)

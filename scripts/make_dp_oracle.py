@@ -1,6 +1,6 @@
 """Build a deliberately overfit strategy that replays the hindsight-optimal trade plan of one tape.
 
-usage: uv run python scripts/make_dp_oracle.py data/round2_public.csv strategies/dumb.py [JOIN_WINDOW_MS]
+usage: uv run python scripts/make_dp_oracle.py data/round2_public.csv strategies/round2/dumb.py [JOIN_WINDOW_MS]
 
 JOIN_WINDOW_MS: a queue-joining order is assumed sent at most this long before its fill (default 300).
 

@@ -1449,3 +1449,13 @@ QV_MIN, QV_MAX), and K_INV · vol / KI_REF.
 
 The direction agrees with the mechanism (bigger quotes in calm, the reverse loses), but the gain is thin and mostly
 q1. Switched on in `strategies/round4/r4m_mldi_v2.py`: **1,214,033** (penalty 9,036); `r4m_mldi.py` stays the 1,204,809 version.
+
+### Round 4: calm aggression and end-of-run exit on r4m_mldi_v2 (rejected, 2026-11-08)
+
+Base `r4m_mldi_v2` 1,214,033 (switches off by default, base reproduced). `scripts/grid_calm.txt`: quiet quote and take
+edge × clamp(vol / ref, min, 1): with the take edge 1,205k–1,207k (q4 −6 to −8k); quote edge only 1,213k–1,214k
+(noise). `scripts/grid_end_{f,q}.txt`: reduce-only quiet quoting in the last 10 / 30 / 60 / 120 s (END_T = tape
+length): full 1,214,033 / same / same / 1,213,959, quarters −0.1k to −4.4k. The end position is liquidated by a sweep
+through the book (`_mark_out_value`), worth about half a spread plus depth on ≤ 100 lots, a few hundred dollars;
+validation runs ended at −27 / −89 / −89 lots. Cash in result.json is the running cash balance, not idle capital:
+there is no capital limit, and |inventory| is at 100 at the median, so the cap is the binding constraint.

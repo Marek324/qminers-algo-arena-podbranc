@@ -1,0 +1,22 @@
+base:
+mldi_v05: V_K_MLDI=0.5
+mldi_v1: V_K_MLDI=1.0
+mldi_v05_l1: V_K_MLDI=0.5, ML_LAM=1.0
+mldi_v05_l8: V_K_MLDI=0.5, ML_LAM=8.0
+mldi_q02: K_MLDI=0.2
+mldi_qn02: K_MLDI=-0.2
+wmp_v05: V_K_WMP=0.5
+wmp_v1: V_K_WMP=1.0
+wmp_q05: K_WMP=0.5
+wmp_qn05: K_WMP=-0.5
+wmp_v05_l3: V_K_WMP=0.5, WMP_LEVELS=3
+wmp_v05_l10: V_K_WMP=0.5, WMP_LEVELS=10
+mlofi_v02: V_K_MLOFI=0.2
+mlofi_vn02: V_K_MLOFI=-0.2
+mlofi_q01: K_MLOFI=0.1
+mlofi_qn01: K_MLOFI=-0.1
+far_v05: V_K_FAR=0.5
+far_vn05: V_K_FAR=-0.5
+far_q02: K_FAR=0.2
+far_qn02: K_FAR=-0.2
+far_vn05_lo10: V_K_FAR=-0.5, FAR_LO=10

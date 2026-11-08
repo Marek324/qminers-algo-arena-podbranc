@@ -1383,3 +1383,23 @@ Stacking grid (`scripts/grid_mldi.txt`, `grid_stack.txt`, full tape): V_K_MLDI 0
 1,204,809 (EDGE_NEW 0.25: 1,203,757); + pre-storm lean K_PRE 0.5 / 1 / 2 (`r4m_aggr` logic) 1,191k / 1,174k / 1,191k.
 Expected gain on the hidden tapes is smaller than on public (the depth term is first-half only on this tape; paired
 robustness of the 0.5 version: chunks 3 / 6 up, bootstrap 3 / 8 up).
+
+### Round 4: spectrum after removing the session swing, order lifetimes, combinations (2026-11-08)
+
+**Spectrum** (`scripts/spectrum.py` + `scripts/plot_spectrum.py`; 1 s mid minus the session cubic, and |1 s move|,
+against 300 paths of 60 s blocks shuffled in time). Detrended price: inside the null band at every period on
+round4_public (a random walk, power ∝ 1/f²); on round3_public only the lowest bin (3000 s, the trend leftover).
+Volatility: bumps at 2000 s (×9.8) and 240 s (×2.8) on round 4, 1500 s (×7.7) and 500 s (×4.7) on round 3. The
+240 s bump is the storm/calm cycle (mean storm 84 s + calm 143 s), which the HMM already tracks live; the long
+bumps are storm intensity drifting over the session, at a different period on each tape. No periodic price component
+to bet on.
+
+**Order lifetimes** (`scripts/lifetime_bias.py`): round 4 lifetimes are not exponential (mean 0.535 s, sd 1.04 s;
+mean remaining life 0.54 s new, 1.15 s after 1 s, 2.65 s after 2 s; top size quartile 0.82 s vs 0.43 s), flat over the
+session (0.49–0.58 s per 600 s block), equal by side. Bid-vs-ask cancelled lots per second vs the next move:
+r −0.086 at 1 s when the counting second overlaps the move, −0.029 / −0.017 / −0.014 at 1 / 5 / 30 s without overlap
+(and partly ghost cancels of filled orders, which the feed never shows). Nothing usable.
+
+**Combinations on r4m_mldi** (`scripts/grid_combo.txt`, `grid_combo2.txt`; full 1,204,809): 18 single nudges (storm
+take edge, S weight, flow, momentum, quiet momentum, DIMB on top, far band, edge sizing, quote pull, weak size, take
+size, P_ON) all within −24k / +1.4k; the top four stacked 1,201k–1,202k. r4m_mldi sits on a flat top.

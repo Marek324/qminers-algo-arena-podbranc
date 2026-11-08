@@ -1181,3 +1181,12 @@ matches the sniper's per-quarter gain (+30k / +23k / +2k / 0).
 - **Adverse-selection-adapted edge** (`AS_K` 0.5 / 1 / 2, EWMA of the move 100 ms after our passive fills): identical
   to the base. Our passive fills are not adverse at 100 ms on average (the EWMA stays below zero), so the widening
   never switches on; the passive loss shows up at 30 s, not 100 ms.
+
+### Round 4: r4m_risk_a vs Jaro's r4_best_snipe (2026-11-08)
+
+Two independent builds of the same design (hmm_deep_clear_r3 + id-gap jump sniper past 100 + storm momentum lean) tie
+on the arena validation tape: `r4m_risk_a` 1,965,048.04 (penalty 12,138), Jaro's `r4_best_snipe` 1,963,678.04 (penalty
+11,261; public 1,142,427). Nothing transfers between them on round4_public: our constants (SIG_Q 0.8, V_K_S 0.9, K_S 0.95)
+cost his file 4–23k, a quiet momentum lean or the far-order trigger add 1–2k (noise); his short storm fade (fair against
+the 2–3 s move, 0.02–0.1) costs ours 5–74% (his works only next to his 1 s EMA momentum term, as a band-pass). Without his
+quote hysteresis / 3 s fade his file loses 4k / 17k.

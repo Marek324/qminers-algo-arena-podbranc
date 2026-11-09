@@ -1,10 +1,12 @@
 # Submissions
 
-Every strategy our team submitted to the arena, by round. Files are in `strategies/roundN/` and run the same code the arena ran; only docstrings and comments were rewritten since.
+Every strategy our team submitted to the arena, by round.
+Files are in `strategies/roundN/` and run the same code the arena ran.
 
-- **train**: local backtest of the file on the round's public tape (`data/roundN_train.csv`),
-- **validation**: the arena's PUBLIC evaluation
-- **test**: local backtest on the published private tape (`data/roundN_test.csv`). Only the final submission was officially scored on it
+- **train**: local backtest of the file on the round's public tape (`data/roundN_train.csv`)
+- **validation**: the arena's PUBLIC evaluation (`data/roundN_val.csv`)
+- **test**: local backtest on the published private tape (`data/roundN_test.csv`).
+  Only the final submission was officially scored on it
 
 Order: the final submission first (bold), then by validation PnL.
 

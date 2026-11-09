@@ -1,8 +1,8 @@
 MIT License
 
-Copyright (c) 2026 team Podbranč
+Copyright (c) 2026 David Bujzaš, Marek Hric, Jakub Komanický, Jaroslav Podmajerský
 
-This license covers the team's own work in this repository: strategies/round1-4, tools/, scripts/, analysis/,
+This license covers the authors' own work in this repository: strategies/round1-4, tools/, scripts/, analysis/,
 dashboard/, experiments/, docs/ and research_notes/. It does not cover simulator/, explorer/,
 strategies/template_strategy.py, strategies/trend_follower.py or the market data in data/, which were provided by
 the hackathon organizers (Qminers) and remain theirs.

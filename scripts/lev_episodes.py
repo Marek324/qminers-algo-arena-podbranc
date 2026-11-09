@@ -1,6 +1,6 @@
 """Per-episode breakdown of inventory overshoots (|inv| > 100) for a strategy with a `_lev` / `_ioc` leverage overlay.
 
-usage: .venv/bin/python scripts/lev_episodes.py logs/r4/lev/v_6.py data/round4_public.csv out.npy
+usage: .venv/bin/python scripts/lev_episodes.py logs/r4/lev/v_6.py data/round4_train.csv out.npy
 Per episode: start time, trigger edge (fair through the touch), peak |inv|, ms over 100, cash of the overshoot IOCs
 marked at the exit, i.e. the gross gain of the extra lots. Prints gain per ms over 100 by trigger-edge bucket.
 """

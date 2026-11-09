@@ -1,76 +1,20 @@
-"""Two-regime market maker: an online HMM picks the regime, a Kalman filter tracks the hidden price.
+"""Two-regime market maker: an online HMM picks the regime, a Kalman filter tracks the hidden price S.
 
-Market (round2_public, docs/DATA_ANALYSIS.md): limit orders arrive at floor(S - X) / ceil(S + X) around a hidden
-price S and never cross the book. The generator switches between a quiet regime (new orders about 1 tick from the
-mid, S about 1 tick/sqrt(s)) and a volatile one (about 2 ticks, S 4-6 ticks/sqrt(s), the big jumps). Resting
-quotes earn the spread in quiet spells and get swept in volatile ones; taking the stale book pays in volatile ones.
+1. Regime: a 2-state HMM with one observation per new market limit order, n = half-ticks between the order and the
+   mid beyond the first half tick, capped at H_NMAX. n is geometric in each state with means learned online (soft
+   EM, H_LR); the forward filter with switch probabilities H_PQV / H_PVQ gives p_vol.
+2. Price: a 1-D Kalman filter whose variance grows by sigma^2 * dt, sigma mixed between SIG_Q and SIG_V by p_vol.
+   Each new order within KF_LEVELS (volatile: KF_LEVELS_V) ticks of its best price is a reading price + c (bid) or
+   price - c (ask), with the gap c learned online. Deeper orders are readings too, with noise r * DEEP_R * (extra
+   depth), so a run of far orders after a jump moves S_hat within a few orders. JUMP_N consecutive readings JUMP_TH+
+   ticks off on one side add JUMP_P to the variance, so S_hat snaps to the new level.
+3. Quiet (p_vol < P_ON): fair = mid + K_S * (S_hat - mid) + K_IMB * imbalance + K_FLOW * flow / depth - K_INV *
+   inventory. Quote at the best price with EDGE to fair; cross at the opposite best when fair is EDGE_TAKE through
+   it. Sticky orders, size capped by MAX_POS.
+4. Volatile: fair from the V_ settings; take the stale book when fair is V_EDGE_TAKE through it (at the best price
+   only, V_QTY per order). No resting quotes.
 
-1. Regime: a 2-state HMM with one observation per new market limit order: n = half-ticks between the order and
-   the mid, beyond the first half tick. n is geometric in each state; the state means are learned online
-   (soft EM, weight H_LR) from the start values H_N_Q0 / H_N_V0. Forward filter with switch probabilities
-   H_PQV (quiet -> volatile) and H_PVQ per order gives p_vol.
-2. Hidden price: a 1-D Kalman filter. Between orders the variance grows by sigma^2 * dt, sigma mixed by p_vol
-   between SIG_Q and SIG_V. Each new order within KF_LEVELS (volatile: KF_LEVELS_V) ticks of its best price is a reading
-   price + c (bid) or price - c (ask); c (learned online per state) is the average distance of new orders from
-   S_hat, and the reading noise comes from the state's geometric spread.
-3. Quiet (p_vol < P_ON): imbalance_mm. fair = mid + K_S * (S_hat - mid) + K_IMB * imbalance
-   + K_FLOW * flow / depth - K_INV * inventory; cross at the opposite best price when fair is EDGE_TAKE through
-   it, otherwise quote at the best price with EDGE to fair. Sticky orders, size capped by MAX_POS.
-4. Volatile: fair from the V_ settings. Cross (sweeping up to fair - V_EDGE_TAKE) when the book is stale.
-   No quote on the side that would grow |inventory|; the other side is cleared (hmm_deep_clear_r3).
-   (100 = no exit order: pure taker, which was best on both halves of round 2).
-Off by default (no gain on round 2): Q_SWEEP (sweep in quiet), H_IOC (IOC gaps as a second HMM observation).
-
-Round 2 (round2_public): 502k with KF depth 1000; depth 4 in both regimes gave +26k on both halves.
-Tuned on the two halves of round2_public, keeping values both halves agree on; most settings sit on flat plateaus.
-
-Round 3 (hmm_deep_r3) = hmm_mm plus jump-aware S readings:
-- New orders deeper than KF_LEVELS(_V) = 2 ticks behind their best price are no longer dropped: they update the
-  Kalman filter with noise r * DEEP_R * (extra depth) and do not train c. One stray far order (long-tailed X)
-  barely moves S_hat; the run of far orders that follows a jump pulls it to the new level within a few orders.
-- Jump boost: JUMP_N consecutive readings more than JUMP_TH ticks from S_hat on the same side add JUMP_P to the
-  filter variance, so S_hat snaps to the new level.
-- P_ON 0.3 (volatile policy a bit earlier).
-Backtests (pnl): round3_public 590,474 (hmm_mm 568,382); r3_eval_twin 928,455 (hmm_mm 731,771). The twin's gain is
-positive in every 20-minute chunk and comes mostly from the seconds around jumps.
-
-hmm_deep617_r3 (2026-11-08) = hmm_deep_r3 with the hmm_617 constants (QTY 150, EDGE 0.2, EDGE_IN 0.4, K_FLOW 1.0,
-V_K_S 0.8, H_N_V0 3.2, H_PQV 0.00003) and KF_LEVELS / KF_LEVELS_V 3. round3_public 620,473, 0 penalty (halves 309.4k /
-310.2k; hmm_617 304.1k / 314.4k, so tied on public). Kept over hmm_617 because the deep-order readings handle big
-jumps: +150k on r3_eval_twin in the untuned version. Settings near this point all score 605-620k on round3_public.
-
-hmm_deep_nm4_r3 (2026-11-08) = hmm_deep617_r3 plus EDGE_IN 0.3, SIG_Q 0.6 (from hmm_617_fit) and H_NMAX 4. H_NMAX caps
-how far one new order can push the regime HMM toward volatile, so scattered far placements no longer flip the strategy
-out of quiet market making (idea from r3_cand_nm6). round3_public by H_NMAX on this base: 20 628,346, 6 650,525,
-5 654,893, 4 664,205. 0 breach penalty.
-
-hmm_deep_clear_r3 (2026-11-08) = hmm_deep_nm4_r3 plus the volatile-branch changes of hmm_vol_clear: no far exit order
-on the reducing side (it used up position room, so flips were late), take at the best opposite price only (V_SWEEP
-False), volatile order size V_QTY 200. round3_public 693,522, 0 penalty (H_NMAX 5: 682,933, 6: 679,350).
-
-Iteration (2026-11-08), round3_public:
-- Rejected: quiet-side take priority (a take cancels same-side passive orders at once and ignores up to 100 lots
-  whose cancel is in flight, with an over-limit unwind): 682,664 incl. 6,047 breach penalty. Not kept in the code.
-- IDG_P (off): the id-gap jump detector (tools/id_gap_jump.py) adds IDG_P to the filter variance on a detection;
-  +4.3k on hmm_617_fit; here IDG_P 25: 694,244 (+722, +0.1%, 0 penalty), too small to matter, left off.
-- Fill audit of the 693,522 run (full logs, markout against the 1 s mid): takes 479k lots at +1.18 ticks/lot by
-  5 s (+567k), passive 697k lots at +0.22 (+151k). |inventory| >= 95 for 46% of the time; while there, the mid moves
-  +1.04 ticks/s in the position's direction (+287k of carry), against ~0 when not at the cap. The leak: 2,428 full
-  flips (+100 -> -100 in one take), 19% reversed within 0.5 s, those cost -281k by 5 s; flips overall +445k.
-- Rejected, staged flips (a normal-strength take against the position only closes it; the other side waits for a
-  confirmation window unless the edge is strong): 50 ms / strong at +0.5: 674,167; 100 ms / +1: 657,309;
-  300 ms / +1: 642,618; 100 ms always staged: 604,574. Median |inventory| falls from 85 to 60-72: reaching the cap
-  fast is worth more than the false flips cost. Not kept in the code.
-- Take decomposition (scratch recorder logging the fair-price parts and Kalman state at each of 5,135 filled takes):
-  reversals within 0.5 s are a volatile-regime effect (28% of volatile takes vs 4% quiet; -299k of -308k). Bad takes
-  follow an S_hat jump (1.4 vs 0.6 ticks in 50 ms) at higher filter variance (P 0.90 vs 0.42). But every volatile
-  edge bucket still earns at 5 s (edge within 0.1 of V_EDGE_TAKE: +0.69 ticks/lot, +77k), so a higher or
-  P-scaled take threshold would cut net profit. The whipsaw is the cost of a profitable fast signal, not a filterable
-  leak.
-- Rejected, quiet takes sized 200 (one order for a full flip; QTY 150 otherwise): 692,949; with EDGE_TAKE 0.2:
-  682,066. Not kept in the code.
-
-Inventory is counted from fills only.
+K_FLOW is scaled by a live estimate of the flow -> mid slope (FLOW_CHECK). Inventory is counted from fills only.
 """
 
 
@@ -87,56 +31,6 @@ from simulator.models import (
     Trade,
 )
 from simulator.strategy import BaseStrategy
-
-
-class IdGapJump:
-    """Jump detector from missing market order ids and clamped new orders (copied from tools/id_gap_jump.py)."""
-
-    def __init__(self, window_us: int = 25_000, n_missing: int = 3) -> None:
-        self.window_us = window_us
-        self.n_missing = n_missing
-        self.hi = 0
-        self.gaps: deque = deque()
-        self.cl_d: deque = deque()
-        self.cl_u: deque = deque()
-        self.nb: deque = deque()
-        self.na: deque = deque()
-
-    def seen(self, order_id: str, now: int) -> None:
-        if not order_id.isdigit():
-            return
-        k = int(order_id)
-        if k <= self.hi:
-            return
-        if self.hi:
-            for _ in range(min(k - self.hi - 1, 5)):
-                self.gaps.append(now)
-        self.hi = k
-
-    def new_order(self, sign: int, price: int, prev_bb: int, prev_ba: int, now: int) -> None:
-        if sign > 0:
-            if price == prev_bb + 1 and price < prev_ba:
-                self.cl_d.append(now)
-            else:
-                self.na.append(now)
-        else:
-            if price == prev_ba - 1 and price > prev_bb:
-                self.cl_u.append(now)
-            else:
-                self.nb.append(now)
-
-    def check(self, now: int) -> int:
-        lo = now - self.window_us
-        for q in (self.gaps, self.cl_d, self.cl_u, self.nb, self.na):
-            while q and q[0] < lo:
-                q.popleft()
-        if len(self.gaps) < self.n_missing:
-            return 0
-        if self.cl_d and not self.nb:
-            return -1
-        if self.cl_u and not self.na:
-            return 1
-        return 0
 
 
 class HmmDeepClearR3Strategy(BaseStrategy):
@@ -184,10 +78,6 @@ class HmmDeepClearR3Strategy(BaseStrategy):
     JUMP_P = 25.0        # variance added to P on a trigger
     C_LR = 0.0005        # weight of each order in the learned price-to-S gap c
     R_MIN = 0.1
-    # id-gap jump detector (tools/id_gap_jump.py): on a detection add IDG_P to the filter variance; 0: off
-    IDG_P = 0.0
-    IDG_WINDOW_US = 25_000
-    IDG_MISSING = 3
     # flow
     FLOW_TAU_US = 100_000
     DEPTH_EMA = 0.001
@@ -233,11 +123,6 @@ class HmmDeepClearR3Strategy(BaseStrategy):
         self.fc_n = 0.0
         self.fc_decay = math.exp(-self.FLOW_CHECK_STEP_US / self.FLOW_CHECK_TAU_US)
         self.flow_scale = 0.0 if self.FLOW_CHECK else 1.0
-        # id-gap jump detector
-        self.idg = IdGapJump(self.IDG_WINDOW_US, self.IDG_MISSING) if self.IDG_P else None
-        self.idg_t = 0
-        self.pbb = 0
-        self.pba = 0
 
     def _cancel(self, oid: str) -> None:
         if oid not in self.cancel_sent:
@@ -278,23 +163,16 @@ class HmmDeepClearR3Strategy(BaseStrategy):
         if asks is not self.last_asks:
             self.last_asks = asks
             self._scan_new(asks, 1, now)
-        self.pbb, self.pba = bb, ba
 
         # flow
         self.flow *= math.exp((self.flow_t - now) / self.FLOW_TAU_US)
         self.flow_t = now
-        idg = self.idg
         for tr in trades:
             if tr.taker_owner == 'market':
                 self.flow += tr.quantity if tr.book_side == 'ask' else -tr.quantity
-                if idg is not None:
-                    idg.seen(tr.taker_order_id, now)
                 if self.H_IOC and tr.taker_order_id != self.last_taker:
                     self.last_taker = tr.taker_order_id
                     self._observe_ioc(now)
-        if idg is not None and now - self.idg_t > self.IDG_WINDOW_US and idg.check(now):
-            self.P += self.IDG_P
-            self.idg_t = now
         half = (bq + aq) / 2
         self.depth = half if self.depth == 0 else self.depth + self.DEPTH_EMA * (half - self.depth)
         x = self.flow / self.depth
@@ -415,10 +293,6 @@ class HmmDeepClearR3Strategy(BaseStrategy):
             oid = o.order_id
             if len(oid) > lm or (len(oid) == lm and oid > mx):
                 self._observe(sign, o.price, (o.price - first) * sign, now)
-                if self.idg is not None:
-                    self.idg.seen(oid, now)
-                    if self.pbb:
-                        self.idg.new_order(sign, o.price, self.pbb, self.pba, now)
                 if len(oid) > len(new_max) or (len(oid) == len(new_max) and oid > new_max):
                     new_max = oid
         self.max_id = new_max

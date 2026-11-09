@@ -4,7 +4,7 @@ The strategy trades normally; every GRID_US the recorder saves the market touch 
 (Kalman S and variance, regime probability, flow, depth, learned gaps) plus a few cheap tape features. Used to fit
 non-linear forecasts of the next mid move offline (scripts/fit_hmm_gbm.py).
 
-usage: .venv/bin/python scripts/record_hmm_features.py strategies/round3/hmm_617_fit.py data/round3_public.csv \
+usage: .venv/bin/python scripts/record_hmm_features.py strategies/round3/hmm_617_fit.py data/round3_train.csv \
            logs/features/r3_hmm.npz [grid_us]
 """
 import math

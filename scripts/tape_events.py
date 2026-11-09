@@ -11,7 +11,7 @@ Output .npz arrays (one row per tape row unless noted):
 
 The IOC price is round(S +- 1), so ioc price - side gives an S reading. Used by scripts/jump_study.py.
 
-usage: uv run python scripts/tape_events.py data/round2_public.csv logs/features/round2_events.npz
+usage: uv run python scripts/tape_events.py data/round2_train.csv logs/features/round2_events.npz
 """
 import sys
 from collections import deque

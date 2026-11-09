@@ -3,7 +3,7 @@
 Wraps the strategy's send_order / on_private_order_update to log every fill (time, sign, price, qty,
 order type). Markouts use the market mid from scripts/tape_events.py output.
 
-usage: uv run python scripts/fill_audit.py strategies/round2/lag_taker.py data/round2_public.csv \
+usage: uv run python scripts/fill_audit.py strategies/round2/lag_taker.py data/round2_train.csv \
            logs/features/round2_events.npz [out.npz]
 """
 import sys

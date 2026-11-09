@@ -1,7 +1,7 @@
 """Backtest constant overrides of one strategy on one or more tapes in parallel and print PnL vs the base.
 
-usage: .venv/bin/python scripts/sweep_vars.py strategies/round3/hmm_deep_r3.py TAG 'A=1,B=2' 'A=3' ...
-env:   TAPES=data/round3_public.csv[,more.csv]   JOBS=8   OUT=logs/sweep
+usage: .venv/bin/python scripts/sweep_vars.py strategies/round3/hmm_deep_clear_r3.py TAG 'A=1,B=2' 'A=3' ...
+env:   TAPES=data/round3_train.csv[,more.csv]   JOBS=8   OUT=logs/sweep
 Each variant is written to $OUT/TAG/v_<i>.py (the base is v_0); results go to $OUT/TAG/<i>_<tape>/.
 """
 import json
@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 base, tag, variants = sys.argv[1], sys.argv[2], sys.argv[3:]
-tapes = os.environ.get('TAPES', 'data/round3_public.csv').split(',')
+tapes = os.environ.get('TAPES', 'data/round3_train.csv').split(',')
 jobs_n = int(os.environ.get('JOBS', '8'))
 out = Path(os.environ.get('OUT', 'logs/sweep')) / tag
 out.mkdir(parents=True, exist_ok=True)

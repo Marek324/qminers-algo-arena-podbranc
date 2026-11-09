@@ -32,7 +32,7 @@ from pathlib import Path
 
 import numpy as np
 
-# round1 fits (docs/DATA_ANALYSIS.md, findings/barbora/direct_params.json)
+# round1 fits (docs/DATA_ANALYSIS.md)
 R1 = dict(
     sigma=0.5,                 # diffusive part only; IOC impact below adds the rest (mid vol ~0.95)
     limit_rate=179.80,

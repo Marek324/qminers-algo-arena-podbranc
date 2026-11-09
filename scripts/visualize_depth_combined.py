@@ -6,7 +6,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 def main():
-    out_dir = Path("data_visualization")
+    out_dir = Path("logs/plots")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. Load Depth 1 (results (2), 10 lots) and Depth 3 (results3, 100 lots)

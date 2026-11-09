@@ -37,8 +37,8 @@ Use it for strategy search. Use `generate` directly, as above, for a single para
 `logs/` is git-ignored, so a fresh checkout has no parameter files. Create them from the tape:
 
 ```bash
-gunzip -k data/round1.csv.gz
-.venv/bin/python scripts/estimate_model.py data/round1.csv --workers 12   # ~2 min
+gunzip -k data/round1_train.csv
+.venv/bin/python scripts/estimate_model.py data/round1_train.csv --workers 12   # ~2 min
 ```
 
 This writes `logs/generator/round1_params.json` and the size samples `round1_limit_sizes.npy` / `round1_ioc_sizes.npy`.

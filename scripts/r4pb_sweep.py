@@ -25,7 +25,7 @@ def main() -> None:
     ap.add_argument('tag')
     ap.add_argument('specs', nargs='+')
     ap.add_argument('-j', '--jobs', type=int, default=4)
-    ap.add_argument('--tape', default='data/round4_public.csv')
+    ap.add_argument('--tape', default='data/round4_train.csv')
     ap.add_argument('--split', type=float, default=3000.0)
     args = ap.parse_args()
     base = args.strategy.read_text()

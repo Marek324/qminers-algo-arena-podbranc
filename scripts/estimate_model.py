@@ -1,7 +1,7 @@
 """Estimate the market-model parameters of a tape: measure, calibrate, fit-check and (optionally) compute the target PnL.
 
 usage:
-    uv run python scripts/estimate_model.py data/round2.csv [--target] [--strategies strategies/a.py,strategies/b.py]
+    uv run python scripts/estimate_model.py data/round2_train.csv [--target] [--strategies strategies/a.py,strategies/b.py]
 
 Steps (model in analysis/generator.py, background in docs/DATA_ANALYSIS.md):
   1. measure   rates, side split, limit/IOC size distributions, cancel timer, IOC price offsets vs the touch, and whether

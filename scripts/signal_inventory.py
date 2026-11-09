@@ -2,7 +2,7 @@
 the future mid move at 100 ms / 500 ms / 1 s / 5 s, overall and per regime (calm / storm from
 estimate_model.detect_regimes), plus predictors of the size of the next move (|move| 1 s).
 
-uv run python scripts/signal_inventory.py data/round2_public.csv
+uv run python scripts/signal_inventory.py data/round2_train.csv
 """
 
 from __future__ import annotations

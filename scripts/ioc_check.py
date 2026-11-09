@@ -2,7 +2,7 @@
 side vs delta (recent new-limit prices minus mid), side vs the past mid move, signed mid move after the IOC by size,
 and clustering of IOC arrivals and signs.
 
-uv run python scripts/ioc_check.py data/round2_public.csv [data/round1.csv ...]
+uv run python scripts/ioc_check.py data/round2_train.csv [data/round1_train.csv ...]
 """
 
 import sys

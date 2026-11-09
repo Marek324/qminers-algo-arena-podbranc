@@ -4,7 +4,7 @@ HMM Maximum Likelihood Estimation of continuous fair-value diffusion sigma_S
 and placement offset X distribution (Shifted Gamma and LogNormal).
 
 Evaluates the exact 1D continuous-state forward grid filter likelihood on a
-slice of round1 limit inserts. Designed for 1-node Slurm jobs on IT4I Barbora
+slice of round1 limit inserts. Designed for 1-node Slurm jobs
 (36 CPUs per node, <= 25 min wall-clock limit).
 """
 import os
@@ -445,7 +445,7 @@ def main():
     parser = argparse.ArgumentParser(description="HMM MLE for latent S_t and X distribution per slice.")
     parser.add_argument('--slice', type=int, default=0, help="Slice index (0 to N-1)")
     parser.add_argument('--n-slices', type=int, default=32, help="Total number of slices")
-    parser.add_argument('--tape', type=str, default='data/round1.csv', help="Path to tape file")
+    parser.add_argument('--tape', type=str, default='data/round1_train.csv', help="Path to tape file")
     parser.add_argument('--out-dir', type=str, default='logs/generator/xfit', help="Output directory")
     parser.add_argument('--subsample', type=int, default=1, help="Subsample step (for smoke tests)")
     parser.add_argument('--max-iter', type=int, default=120, help="Nelder-Mead max iterations")

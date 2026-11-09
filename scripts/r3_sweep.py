@@ -1,6 +1,6 @@
 """Run named strategy variants on several tapes in parallel and print/save a PnL table.
 
-usage: .venv/bin/python scripts/r3_sweep.py strategies/round3/x.py data/round3_public.csv data/r3_eval_twin.csv \
+usage: .venv/bin/python scripts/r3_sweep.py strategies/round3/x.py data/round3_train.csv data/r3_eval_twin.csv \
            -v base= -v lev2=LEV_POS=300,LEV_EDGE=3 [-g NAME=v1,v2,v3] [-j 10] [--out logs/sweeps/name.csv]
 
 -v NAME=K1=V1,K2=V2  one named variant (empty override list = file as is); repeatable.

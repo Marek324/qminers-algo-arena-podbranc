@@ -27,7 +27,7 @@ import robustness_tab  # noqa: E402
 import strategy_view  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_FILE = 'sample_v2.csv'  # opened first when it is in data/ (unzip data/sample_v2.csv.gz)
+DEFAULT_FILE = 'round1_train.csv'  # opened first when it is in data/
 UP, DOWN, ACCENT = '#26a69a', '#ef5350', '#f5c542'
 GRID = 'rgba(128,128,128,0.15)'
 CLEAR = 'rgba(0,0,0,0)'

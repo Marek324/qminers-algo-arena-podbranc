@@ -4,7 +4,7 @@ For each slice, a grid filter tracks the hidden price S from limit-order prices 
 sell = ceil(S + X)) and maximises the exact likelihood over sigma_S and the X distribution (shifted gamma and
 lognormal). The slices run in parallel, one per core, and are pooled at the end.
 
-    .venv/bin/python scripts/fit_x.py data/round2.csv --slices 20 --workers 12
+    .venv/bin/python scripts/fit_x.py data/round2_train.csv --slices 20 --workers 12
 
 Writes logs/generator/xfit_<name>/slice_*.json and logs/generator/<name>_xfit.json. About 4-5 min per slice per core.
 The sigma it reports has no IOC push, so it comes out a bit above estimate_model.py's sigma_s; use it for X only.

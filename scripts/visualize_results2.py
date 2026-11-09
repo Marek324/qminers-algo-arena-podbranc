@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from scipy import stats
 
 def main():
-    out_dir = Path("data_visualization")
+    out_dir = Path("logs/plots")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. Load results (2) - probe run that tracked mark price

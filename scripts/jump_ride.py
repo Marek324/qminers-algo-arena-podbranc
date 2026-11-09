@@ -5,7 +5,7 @@ size, how long it took, and the mid path after it (continuation vs reversion). T
 enter LOTS in the move direction DELAY_S after the episode is first detectable (mid already THR/2 through), at the
 mid +- half spread, exit after H seconds, minus the flat 10,000 / s penalty while over 100 lots.
 
-.venv/bin/python scripts/jump_ride.py data/round2_public.csv data/round3_public.csv
+.venv/bin/python scripts/jump_ride.py data/round2_train.csv data/round3_train.csv
 """
 
 from __future__ import annotations

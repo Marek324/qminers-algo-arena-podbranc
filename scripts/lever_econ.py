@@ -7,7 +7,7 @@ levels; the IOC exit) and charge the penalty for T. Reports the average and tota
 the gross before the penalty, so a profitable leverage design shows up as a positive row. Our own orders are not in
 the book and do not move it; exits only see market orders.
 
-uv run python scripts/lever_econ.py data/round3_public.csv
+uv run python scripts/lever_econ.py data/round3_train.csv
 """
 
 from __future__ import annotations

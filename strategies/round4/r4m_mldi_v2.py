@@ -1,8 +1,35 @@
-"""r4m_mldi_v2: r4m_risk_a + weak 2-id jump tier inside the cap + storm distance-weighted depth imbalance (V_K_MLDI 0.6,
-lambda 2 ticks) + Jaro's quiet quote hysteresis (EDGE_NEW 0.3, EDGE 0.15) + quiet quote size by the vol forecast
-(QTY * clamp(1.5 / vol, 0.5, 1.5)). round4_public 1,214,033; quarters 350,159 / 314,189 / 296,130 / 247,786
-(r4m_risk_a 1,156,545; 317,269 / 290,067 / 297,272 / 250,387). Long shot: the depth term pays in the heavier-storm
-first half only, the size term is thin. Other switches in this file are experiments, off by default.
+"""Two-regime market maker: an online HMM picks the regime, a Kalman filter tracks the hidden price S.
+
+1. Regime: a 2-state HMM with one observation per new market limit order, n = half-ticks between the order and the
+   mid beyond the first half tick, capped at H_NMAX. n is geometric in each state with means learned online (soft
+   EM, H_LR); the forward filter with switch probabilities H_PQV / H_PVQ gives p_vol.
+2. Price: a 1-D Kalman filter whose variance grows by sigma^2 * dt, sigma mixed between SIG_Q and SIG_V by p_vol.
+   Each new order within KF_LEVELS (volatile: KF_LEVELS_V) ticks of its best price is a reading price + c (bid) or
+   price - c (ask), with the gap c learned online. Deeper orders are readings too, with noise r * DEEP_R * (extra
+   depth), so a run of far orders after a jump moves S_hat within a few orders. JUMP_N consecutive readings JUMP_TH+
+   ticks off on one side add JUMP_P to the variance, so S_hat snaps to the new level.
+3. Quiet (p_vol < P_ON): fair = mid + K_S * (S_hat - mid) + K_IMB * imbalance + K_FLOW * flow / depth - K_INV *
+   inventory + K_MOM * (mid - mid MOM_US ago). Quote at the best price with EDGE_NEW (a resting quote stays while it
+   keeps EDGE) to fair; cross at the opposite best when fair is EDGE_TAKE through it. Sticky orders, size capped by
+   MAX_POS.
+4. Volatile: fair from the V_ settings plus V_K_MOM * (mid - mid MOM_US ago); take the stale book when fair is
+   V_EDGE_TAKE through it (at the best price only, V_QTY per order). No resting quotes.
+
+K_FLOW is scaled by a live estimate of the flow -> mid slope (FLOW_CHECK). Inventory is counted from fills only.
+
+Jump sniper (goes past the 100 cap; the penalty is a flat 10 per ms at any size): CONFIRM_N new orders SNIPE_FAR+
+ticks behind the opposite best that agree within CONFIRM_US, or an id-gap detection (IdGapJump: missing market order
+ids plus clamped orders inside the stale touch, IDG_SNIPE), mean S has jumped. One IOC sweeps the stale side up to
+SNIPE_POS lots of position. The excess is closed at S_new -+ UNWIND_GAP once the book gets there, else through the
+touch after MAX_OVER_US. Kill switches: too many snipes per KILL_RATE_US, or KILL_OVER_US total time over the cap.
+Q_PASSIVE: 0 quotes both sides in quiet, 1 only the reducing side, 2 none.
+
+Weak jump tier: an id gap of WEAK_MISSING ids takes toward +-WEAK_POS inside the cap at once, sweeping up to
+WEAK_DEPTH ticks through the touch (WEAK_COOLDOWN_US between fires).
+Storm depth imbalance: volatile fair += V_K_MLDI * imbalance of book depth over ML_DEPTH ticks, weighted
+exp(-distance / ML_LAM). Every other signal switch in the class is off by default.
+
+Quiet quote size: QTY * clamp((QV_REF / vol) ^ QV_POW, QV_MIN, QV_MAX), vol from the online volatility estimate.
 """
 
 import math
@@ -21,7 +48,7 @@ from simulator.strategy import BaseStrategy
 
 
 class IdGapJump:
-    """Jump detector from missing market order ids and clamped new orders (copied from tools/id_gap_jump.py)."""
+    """Jump detector from missing market order ids and clamped new orders."""
 
     def __init__(self, window_us: int = 25_000, n_missing: int = 3) -> None:
         self.window_us = window_us
@@ -142,11 +169,11 @@ class R4mMldiV2Strategy(BaseStrategy):
     JUMP_CANCEL = 0      # 1: on id-gap fires (weak and strong)
     FAR_CANCEL = 0       # >0: also on a single new order this far behind the opposite best
     JC_HOLD_US = 50_000
-    # pre-storm lean (from r4m_aggr): fair += K_PRE * sign(market IOC net volume over PRE_US) while PRE_LO <= p_vol < P_ON
+    # pre-storm lean: fair += K_PRE * sign(market IOC net volume over PRE_US) while PRE_LO <= p_vol < P_ON
     PRE_LO = 0.1
     K_PRE = 0.0
     PRE_US = 2_000_000
-    # quiet quote hysteresis (Jaro): a new quote needs EDGE_NEW, resting ones stay until below EDGE (0: off)
+    # quiet quote hysteresis: a new quote needs EDGE_NEW, resting ones stay until below EDGE (0: off)
     EDGE_NEW = 0.3
     K_MOM = 0.1
     V_K_MOM = 0.1
@@ -211,7 +238,7 @@ class R4mMldiV2Strategy(BaseStrategy):
     KILL_RATE_N = 4              # more than this many snipes within KILL_RATE_US stops sniping for good
     KILL_RATE_US = 600_000_000
     KILL_OVER_US = 10_000_000    # total time over MAX_POS (10 s = 100k of penalty) stops sniping for good
-    # id-gap jump detector (tools/id_gap_jump.py): on a detection add IDG_P to the filter variance; 0: off
+    # id-gap jump detector: on a detection add IDG_P to the filter variance; 0: off
     IDG_P = 0.0
     IDG_SNIPE = 1        # 1: an id-gap detection (a jump beyond the visible 20 ticks) also fires the sniper
     IDG_DEPTH = 10       # ... sweeping the stale side up to this many ticks through the old touch

@@ -38,8 +38,8 @@ misleads the quotes (control tapes: about -84k per hour). So its weight is scale
 has predicted the mid 0.5 s ahead over roughly the last 5 minutes, and drops to 0 when it hasn't.
 That cut the control-tape losses to -6k ... -24k with no cost on round 1.
 
-Run:  uv run exchange-simulator --strategy strategies/round1/adaptive_mm.py --backtest data/round1.csv --log-dir logs/adaptive --no-logs
-Tune: python3 -I scripts/sweep.py strategies/round1/adaptive_mm.py data/round1.csv -p EDGE=0.25,0.3,0.35
+Run:  uv run exchange-simulator --strategy strategies/round1/adaptive_mm.py --backtest data/round1_train.csv --log-dir logs/adaptive --no-logs
+Tune: python3 -I scripts/sweep.py strategies/round1/adaptive_mm.py data/round1_train.csv -p EDGE=0.25,0.3,0.35
 Experiment history: docs/RESEARCH.md.
 """
 from __future__ import annotations

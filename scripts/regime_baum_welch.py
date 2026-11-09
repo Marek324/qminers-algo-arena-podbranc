@@ -6,7 +6,7 @@ switch probabilities are per order. Prints the fitted means, switch probabilitie
 seconds (from the smoothed posterior), and the same fit on each half of the tape (stationarity check). The fitted
 values are the starting points H_N_Q0, H_N_V0, H_PQV, H_PVQ for a new round.
 
-usage: .venv/bin/python scripts/regime_baum_welch.py data/round4_public.csv [--iters 20]
+usage: .venv/bin/python scripts/regime_baum_welch.py data/round4_train.csv [--iters 20]
 """
 import argparse
 import importlib.util

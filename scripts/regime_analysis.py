@@ -3,7 +3,7 @@ out), IOC rate, limit rate, spread>1 share and touch depth; then persistence (au
 constant rate) and a 2-state hidden Markov fit per series (Poisson for counts, Gaussian on log for the rest) against a
 1-state model by BIC, with the expected state durations.
 
-uv run python scripts/regime_analysis.py data/round2_public.csv [data/round1.csv ...]
+uv run python scripts/regime_analysis.py data/round2_train.csv [data/round1_train.csv ...]
 """
 
 from __future__ import annotations

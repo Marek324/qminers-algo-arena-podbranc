@@ -24,9 +24,7 @@ $$S(t) = 10,001.0 + \frac{\Pi(t)}{10.0}$$
 
 ## 2. Visualization of the Evaluation Process
 
-The high-resolution visualization dashboard is saved at [`data_visualization/results2_market_reconstruction.png`](../data_visualization/results2_market_reconstruction.png):
-
-![Reconstructed Evaluation Tape Market Process](../data_visualization/results2_market_reconstruction.png)
+`scripts/visualize_results2.py` draws the reconstruction (to `logs/plots/`).
 
 ### Dashboard Structure:
 - **Panel A (12,000s Market Price $S(t)$)**: Complete macroscopic price trajectory, ranging between $9,723.0$ and $10,641.0\text{ ticks}$, with all 51 major jumps ($\ge 20\text{ ticks}$) pinpointed.
@@ -41,7 +39,7 @@ The high-resolution visualization dashboard is saved at [`data_visualization/res
 
 By combining **Depth 1** ([`docs/results (2)`](docs/results%20(2)/), holding $10\text{ lots}$) and **Depth 3** ([`docs/results3`](docs/results3/), holding $100\text{ lots}$), we extracted the order book thickness and slippage profile across the entire 12,000-second evaluation dataset:
 
-![Combined Order Book Depth Analysis](../data_visualization/results_depth_combined.png)
+`scripts/visualize_depth_combined.py` draws it (to `logs/plots/`).
 
 ### Key Depth Findings:
 1. **Touch Liquidity Availability**:
@@ -110,8 +108,7 @@ The round 3 evaluation tape is a new draw: 12,000 s, mid 10,001 → 10,034. Thre
 RMSE 0.15 t with no bias, spread 1.29 vs 1.24 real. Increment distributions at 1/10/60 s are indistinguishable from
 the real mid (KS p ≥ 0.13, 1 s kurtosis 219 vs 213).
 
-**What the probes show** ([`data_visualization/r3_eval_reconstruction.png`](../data_visualization/r3_eval_reconstruction.png),
-`scripts/visualize_eval_r3.py`):
+**What the probes show** (`scripts/visualize_eval_r3.py`):
 
 | | round 3 eval |
 |---|---|

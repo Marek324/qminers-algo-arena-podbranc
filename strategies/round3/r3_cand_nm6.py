@@ -1,52 +1,20 @@
-"""Round 3 candidate: the final submission (tuned hmm_mm) plus SIG_Q 0.6 and H_NMAX 6, jump sniper off.
+"""Two-regime market maker: an online HMM picks the regime, a Kalman filter tracks the hidden price S.
 
-H_NMAX caps how far (in half-ticks) one new order can push the regime HMM toward storm; a lower cap keeps scattered
-far placements from flipping the strategy out of calm market making. round3_public by H_NMAX: 20 (final) 618,001,
-12 625,074, 10 630,959, 8 637,639, 6 643,075, 5 652,005, 4 633,862, 3 645,293, 2 338,049 (cliff). 6 is taken from the
-3-6 plateau, away from the cliff. Quarters at 6: 129,216 / 191,981 / 159,262 / 161,758 (3 of 4 above H_NMAX 10).
-H_NMAX 10 version (r3_cand_tune): 630,959; quarters 122,673 / 187,574 / 159,350 / 160,485, all above the final.
-robustness.py: mirrored 631,233, 8/8 reshuffled sessions profitable. Each change came from a quarter-guarded
-coordinate-descent tune (+0.5% and 3 of 4 quarters). SNIPE_FAR = 100000 disables the inherited sniper.
+1. Regime: a 2-state HMM with one observation per new market limit order, n = half-ticks between the order and the
+   mid beyond the first half tick, capped at H_NMAX. n is geometric in each state with means learned online (soft
+   EM, H_LR); the forward filter with switch probabilities H_PQV / H_PVQ gives p_vol.
+2. Price: a 1-D Kalman filter whose variance grows by sigma^2 * dt, sigma mixed between SIG_Q and SIG_V by p_vol.
+   Each new order within KF_LEVELS (volatile: KF_LEVELS_V) ticks of its best price is a reading price + c (bid) or
+   price - c (ask), with the gap c learned online.
+3. Quiet (p_vol < P_ON): fair = mid + K_S * (S_hat - mid) + K_IMB * imbalance + K_FLOW * flow / depth - K_INV *
+   inventory. Quote at the best price with EDGE to fair; cross at the opposite best when fair is EDGE_TAKE through
+   it. Sticky orders, size capped by MAX_POS.
+4. Volatile: fair from the V_ settings; take the stale book when fair is V_EDGE_TAKE through it (sweeping up to fair
+   - V_EDGE_TAKE). No resting quotes.
 
-Previous docstring (r3_sniper_mm): hmm_mm plus millisecond inventory overshoots on big jumps in the hidden price.
+K_FLOW is scaled by a live estimate of the flow -> mid slope (FLOW_CHECK). Inventory is counted from fills only.
 
-The exchange charges 10 per millisecond while |inventory| > 100, the same for 101 or 1000 lots, so a short trip is
-cheap: 20 ms over costs 200. When a new market limit order lands SNIPE_FAR or more ticks behind the opposite best,
-S has just jumped about that far (round 3: far orders lead the mid by about 1 s). One IOC sweeps the stale opposite
-side at least SNIPE_MARGIN through the new S, up to SNIPE_POS lots of position (the 1000-lot hard limit counts
-resting orders). The overshoot is closed in two stages: as soon as the near side has caught up with the new S (best
-bid >= S_new - UNWIND_GAP for a long position) by an IOC priced at S_new - UNWIND_GAP, so it never dumps below that
-level; and after MAX_OVER_US by an IOC through the touch. Between snipes this is hmm_mm unchanged.
-
-Docstring of hmm_mm.py:
-
-Two-regime market maker: an online HMM picks the regime, a Kalman filter tracks the hidden price.
-
-Market (round2_public, docs/DATA_ANALYSIS.md): limit orders arrive at floor(S - X) / ceil(S + X) around a hidden
-price S and never cross the book. The generator switches between a quiet regime (new orders about 1 tick from the
-mid, S about 1 tick/sqrt(s)) and a volatile one (about 2 ticks, S 4-6 ticks/sqrt(s), the big jumps). Resting
-quotes earn the spread in quiet spells and get swept in volatile ones; taking the stale book pays in volatile ones.
-
-1. Regime: a 2-state HMM with one observation per new market limit order: n = half-ticks between the order and
-   the mid, beyond the first half tick. n is geometric in each state; the state means are learned online
-   (soft EM, weight H_LR) from the start values H_N_Q0 / H_N_V0. Forward filter with switch probabilities
-   H_PQV (quiet -> volatile) and H_PVQ per order gives p_vol.
-2. Hidden price: a 1-D Kalman filter. Between orders the variance grows by sigma^2 * dt, sigma mixed by p_vol
-   between SIG_Q and SIG_V. Each new order within KF_LEVELS (volatile: KF_LEVELS_V) ticks of its best price is a reading
-   price + c (bid) or price - c (ask); c (learned online per state) is the average distance of new orders from
-   S_hat, and the reading noise comes from the state's geometric spread.
-3. Quiet (p_vol < P_ON): imbalance_mm. fair = mid + K_S * (S_hat - mid) + K_IMB * imbalance
-   + K_FLOW * flow / depth - K_INV * inventory; cross at the opposite best price when fair is EDGE_TAKE through
-   it, otherwise quote at the best price with EDGE to fair. Sticky orders, size capped by MAX_POS.
-4. Volatile: fair from the V_ settings. Cross (sweeping up to fair - V_EDGE_TAKE) when the book is stale.
-   No quote on the side that would grow |inventory|; the other side rests one exit order V_EXIT_EDGE from fair
-   (100 = no exit order: pure taker, which was best on both halves of round 2).
-Off by default (no gain on round 2): Q_SWEEP (sweep in quiet), H_IOC (IOC gaps as a second HMM observation).
-
-Round 2 (round2_public): 502k with KF depth 1000; depth 4 in both regimes gave +26k on both halves.
-Tuned on the two halves of round2_public, keeping values both halves agree on; most settings sit on flat plateaus.
-
-Inventory is counted from fills only.
+Contains a jump sniper that is disabled here (SNIPE_FAR = 100000).
 """
 
 from __future__ import annotations
@@ -124,7 +92,7 @@ class R3CandNm6Strategy(BaseStrategy):
     SNIPE_QUIET_ONLY = False
     KILL_RATE_N = 4              # kill switch: more than this many snipes within KILL_RATE_US stops sniping for good
     KILL_RATE_US = 600_000_000
-    KILL_OVER_US = 3_000_000     # kill switch: total time over MAX_POS (3 s = 30k of penalty) stops sniping for good  # snipe only while hmm_mm's HMM still says quiet (it is not sweeping the stale side itself)
+    KILL_OVER_US = 3_000_000     # kill switch: total time over MAX_POS (3 s = 30k of penalty) stops sniping for good  # snipe only while the HMM still says quiet (it is not sweeping the stale side itself)
     # flow
     FLOW_TAU_US = 100_000
     DEPTH_EMA = 0.001

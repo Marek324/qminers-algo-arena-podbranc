@@ -1,4 +1,4 @@
-"""Probe strategy that holds 100 lots to measure order book depth and queue thickness."""
+"""Probe: buys 100 lots at the start and holds them to the end. Not a trading strategy."""
 
 from __future__ import annotations
 

@@ -1,7 +1,7 @@
 """What is a jump? Prints 100 ms bins around the largest mid moves of a tape: mid, mean new-limit price per side
 (the side away from the move is not clamped, so it shows S), IOC count and deepest IOC price through the touch.
 
-uv run python scripts/jump_probe.py data/round2_public.csv [n_episodes]
+uv run python scripts/jump_probe.py data/round2_train.csv [n_episodes]
 """
 
 import sys

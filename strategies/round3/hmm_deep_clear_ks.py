@@ -1,66 +1,20 @@
-"""hmm_deep_clear_ks: hmm_deep_clear_r3 retuned on Barbora (2026-11-08, sweeps s14/s15 and c1-c4).
+"""Two-regime market maker: an online HMM picks the regime, a Kalman filter tracks the hidden price S.
 
-Changes from hmm_deep_clear_r3: KF_LEVELS 3 -> 2, K_INV 0.002 -> 0.0015, H_NMAX 4 -> 5, K_FLOW 1.0 -> 0.9,
-DEEP_R 2.0 -> 3.0, H_N_V0 3.2 -> 3.5, K_S 0.75 -> 0.85.
-round3_public 713,244 (hmm_deep_clear_r3 693,522), r3_eval_twin 925,207 (815,273), 0 breach penalty.
-Search: one step either side of 20 constants, then stacking the ones that beat the base on both tapes, then
-leave-one-out (dropping H_PVQ 0.0004 helped both). Every one-step neighbour of the final point scores less on
-round3_public (K_FLOW 0.8 / H_NMAX 6 add 21-24k on the twin but cost 6-12k on public).
-Rejected: SIG_V 8-12, tighter quotes (EDGE 0.1-0.15, EDGE_IN 0.2), V_QTY 150/300, EDGE_TAKE 0.3, QTY 170, SIG_Q 0.7.
+1. Regime: a 2-state HMM with one observation per new market limit order, n = half-ticks between the order and the
+   mid beyond the first half tick, capped at H_NMAX. n is geometric in each state with means learned online (soft
+   EM, H_LR); the forward filter with switch probabilities H_PQV / H_PVQ gives p_vol.
+2. Price: a 1-D Kalman filter whose variance grows by sigma^2 * dt, sigma mixed between SIG_Q and SIG_V by p_vol.
+   Each new order within KF_LEVELS (volatile: KF_LEVELS_V) ticks of its best price is a reading price + c (bid) or
+   price - c (ask), with the gap c learned online. Deeper orders are readings too, with noise r * DEEP_R * (extra
+   depth), so a run of far orders after a jump moves S_hat within a few orders. JUMP_N consecutive readings JUMP_TH+
+   ticks off on one side add JUMP_P to the variance, so S_hat snaps to the new level.
+3. Quiet (p_vol < P_ON): fair = mid + K_S * (S_hat - mid) + K_IMB * imbalance + K_FLOW * flow / depth - K_INV *
+   inventory. Quote at the best price with EDGE to fair; cross at the opposite best when fair is EDGE_TAKE through
+   it. Sticky orders, size capped by MAX_POS.
+4. Volatile: fair from the V_ settings; take the stale book when fair is V_EDGE_TAKE through it (at the best price
+   only, V_QTY per order). No resting quotes.
 
-Docstring of hmm_deep_clear_r3.py:
-
-Two-regime market maker: an online HMM picks the regime, a Kalman filter tracks the hidden price.
-
-Market (round2_public, docs/DATA_ANALYSIS.md): limit orders arrive at floor(S - X) / ceil(S + X) around a hidden
-price S and never cross the book. The generator switches between a quiet regime (new orders about 1 tick from the
-mid, S about 1 tick/sqrt(s)) and a volatile one (about 2 ticks, S 4-6 ticks/sqrt(s), the big jumps). Resting
-quotes earn the spread in quiet spells and get swept in volatile ones; taking the stale book pays in volatile ones.
-
-1. Regime: a 2-state HMM with one observation per new market limit order: n = half-ticks between the order and
-   the mid, beyond the first half tick. n is geometric in each state; the state means are learned online
-   (soft EM, weight H_LR) from the start values H_N_Q0 / H_N_V0. Forward filter with switch probabilities
-   H_PQV (quiet -> volatile) and H_PVQ per order gives p_vol.
-2. Hidden price: a 1-D Kalman filter. Between orders the variance grows by sigma^2 * dt, sigma mixed by p_vol
-   between SIG_Q and SIG_V. Each new order within KF_LEVELS (volatile: KF_LEVELS_V) ticks of its best price is a reading
-   price + c (bid) or price - c (ask); c (learned online per state) is the average distance of new orders from
-   S_hat, and the reading noise comes from the state's geometric spread.
-3. Quiet (p_vol < P_ON): imbalance_mm. fair = mid + K_S * (S_hat - mid) + K_IMB * imbalance
-   + K_FLOW * flow / depth - K_INV * inventory; cross at the opposite best price when fair is EDGE_TAKE through
-   it, otherwise quote at the best price with EDGE to fair. Sticky orders, size capped by MAX_POS.
-4. Volatile: fair from the V_ settings. Cross (sweeping up to fair - V_EDGE_TAKE) when the book is stale.
-   No quote on the side that would grow |inventory|; the other side is cleared (hmm_deep_clear_r3).
-   (100 = no exit order: pure taker, which was best on both halves of round 2).
-Off by default (no gain on round 2): Q_SWEEP (sweep in quiet), H_IOC (IOC gaps as a second HMM observation).
-
-Round 2 (round2_public): 502k with KF depth 1000; depth 4 in both regimes gave +26k on both halves.
-Tuned on the two halves of round2_public, keeping values both halves agree on; most settings sit on flat plateaus.
-
-Round 3 (hmm_deep_r3) = hmm_mm plus jump-aware S readings:
-- New orders deeper than KF_LEVELS(_V) = 2 ticks behind their best price are no longer dropped: they update the
-  Kalman filter with noise r * DEEP_R * (extra depth) and do not train c. One stray far order (long-tailed X)
-  barely moves S_hat; the run of far orders that follows a jump pulls it to the new level within a few orders.
-- Jump boost: JUMP_N consecutive readings more than JUMP_TH ticks from S_hat on the same side add JUMP_P to the
-  filter variance, so S_hat snaps to the new level.
-- P_ON 0.3 (volatile policy a bit earlier).
-Backtests (pnl): round3_public 590,474 (hmm_mm 568,382); r3_eval_twin 928,455 (hmm_mm 731,771). The twin's gain is
-positive in every 20-minute chunk and comes mostly from the seconds around jumps.
-
-hmm_deep617_r3 (2026-11-08) = hmm_deep_r3 with the hmm_617 constants (QTY 150, EDGE 0.2, EDGE_IN 0.4, K_FLOW 1.0,
-V_K_S 0.8, H_N_V0 3.2, H_PQV 0.00003) and KF_LEVELS / KF_LEVELS_V 3. round3_public 620,473, 0 penalty (halves 309.4k /
-310.2k; hmm_617 304.1k / 314.4k, so tied on public). Kept over hmm_617 because the deep-order readings handle big
-jumps: +150k on r3_eval_twin in the untuned version. Settings near this point all score 605-620k on round3_public.
-
-hmm_deep_nm4_r3 (2026-11-08) = hmm_deep617_r3 plus EDGE_IN 0.3, SIG_Q 0.6 (from hmm_617_fit) and H_NMAX 4. H_NMAX caps
-how far one new order can push the regime HMM toward volatile, so scattered far placements no longer flip the strategy
-out of quiet market making (idea from r3_cand_nm6). round3_public by H_NMAX on this base: 20 628,346, 6 650,525,
-5 654,893, 4 664,205. 0 breach penalty.
-
-hmm_deep_clear_r3 (2026-11-08) = hmm_deep_nm4_r3 plus the volatile-branch changes of hmm_vol_clear: no far exit order
-on the reducing side (it used up position room, so flips were late), take at the best opposite price only (V_SWEEP
-False), volatile order size V_QTY 200. round3_public 693,522, 0 penalty (H_NMAX 5: 682,933, 6: 679,350).
-
-Inventory is counted from fills only.
+K_FLOW is scaled by a live estimate of the flow -> mid slope (FLOW_CHECK). Inventory is counted from fills only.
 """
 
 

@@ -6,7 +6,7 @@ A Streamlit dashboard for browsing a raw market-data CSV (`Time,Operation,OrderI
 uv run --with streamlit streamlit run dashboard/app.py
 ```
 
-Streamlit comes in only through `--with`, so the project dependencies are unchanged. It opens `data/sample_v2.csv` (unzip `data/sample_v2.csv.gz` first) when it is there; pick another file from `data/*.csv` or upload one in the sidebar. The **How to read this page** button in the top right explains everything on the page in plain words.
+Streamlit comes in only through `--with`, so the project dependencies are unchanged. It opens `data/round1_train.csv` when it is there (unzip the tapes first); pick another file from `data/*.csv` or upload one in the sidebar. The **How to read this page** button in the top right explains everything on the page in plain words.
 
 ## Moving through time
 - **Play / Pause** runs the market forward. **Play speed** sets how fast (real time up to 300x).

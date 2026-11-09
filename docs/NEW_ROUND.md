@@ -12,12 +12,12 @@ that blocks Unix sockets.
 
 | # | Step | Command | Time (12 cores) |
 |---|---|---|---|
-| 1 | Get the tape | `git pull`, then `gunzip -k data/roundN.csv.gz` | seconds |
-| 2 | Analyse it | `.venv/bin/python analysis.py data/roundN.csv` | ~1 min |
-| 3 | Fit the model (rates, sizes, cancel timer, IOC pricing, X, σ, push) | `.venv/bin/python scripts/estimate_model.py data/roundN.csv --workers 12` | ~1–2 min |
+| 1 | Get the tape | `git pull`, then `gunzip -k data/roundN_train.csv.gz` | seconds |
+| 2 | Analyse it | `.venv/bin/python analysis.py data/roundN_train.csv` | ~1 min |
+| 3 | Fit the model (rates, sizes, cancel timer, IOC pricing, X, σ, push) | `.venv/bin/python scripts/estimate_model.py data/roundN_train.csv --workers 12` | ~1–2 min |
 | 4 | Read the fit | `logs/generator/roundN_fit.md` (about 1 per metric is close) | – |
-| 5 | Optional: likelihood fit of X | `.venv/bin/python scripts/fit_x.py data/roundN.csv --slices 20 --workers 12` | ~8–10 min |
-| 6 | Expected PnL with the fitted params | `.venv/bin/python scripts/expected_pnl.py --name roundN --real data/roundN.csv` | ~15–20 min |
+| 5 | Optional: likelihood fit of X | `.venv/bin/python scripts/fit_x.py data/roundN_train.csv --slices 20 --workers 12` | ~8–10 min |
+| 6 | Expected PnL with the fitted params | `.venv/bin/python scripts/expected_pnl.py --name roundN --real data/roundN_train.csv` | ~15–20 min |
 | 7 | Same with the likelihood X | `.venv/bin/python scripts/expected_pnl.py --name roundN --x-from logs/generator/roundN_xfit.json` | ~15–20 min |
 | 8 | Write it down | add a column for the new round to `docs/round1.md` / `DATA_ANALYSIS.md`, then commit the docs, not `logs/` | – |
 
@@ -50,7 +50,4 @@ Steps 5–7 can run together if the cores are split (`--workers 6` each).
 ## When a cluster helps
 
 Only for big sweeps, such as all 96 slices of `fit_x.py` or many parameter variants. Everything above runs locally.
-On IT4I Barbora, run 1-node jobs with short limits, because they start soonest. Use `qcpu_free` or `qcpu_exp`, never the
-login node. The job needs the repo's pinned versions in a venv, because the cluster's SciPy module ships older pandas.
-The experimental Barbora calibration (`findings/barbora/`, git-ignored) used a simplified simulator without the IOC
-push, so don't reuse its results for anything but X.
+A cluster job needs the repo's pinned versions in a venv; system SciPy modules often ship an older pandas.

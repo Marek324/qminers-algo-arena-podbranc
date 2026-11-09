@@ -1,95 +1,21 @@
-"""r4_best_merge (round 4, 2026-11-08): r4_quiet_hyst_ks plus the volatile 3 s momentum fade of r4_vol_mom3.
+"""Two-regime market maker: an online HMM picks the regime, a Kalman filter tracks the hidden price S.
 
-Stack on hmm_deep_clear_r3 (round 3 best):
-- volatile momentum V_K_MOM 0.2 on the 1 s EMA of the mid (+24.9k on round4_public);
-- quiet quote hysteresis (new quotes need EDGE_NEW 0.25, resting ones cancel below EDGE 0.1) and K_S 0.9 (+19.9k);
-- volatile V_K_MOM2 -0.05 on the 3 s EMA: follow the last ~1 s move, fade what has lasted ~3 s (+16.7k).
-round4_public 1,107,886, 0 breach penalty. Halves: 569,391 / 538,324 (without V_K_MOM2: 560,699 / 529,729).
-Leverage beyond 100 lots loses on round 4 (gross 3.5 $/ms vs 10 $/ms penalty).
+1. Regime: a 2-state HMM with one observation per new market limit order, n = half-ticks between the order and the
+   mid beyond the first half tick, capped at H_NMAX. n is geometric in each state with means learned online (soft
+   EM, H_LR); the forward filter with switch probabilities H_PQV / H_PVQ gives p_vol.
+2. Price: a 1-D Kalman filter whose variance grows by sigma^2 * dt, sigma mixed between SIG_Q and SIG_V by p_vol.
+   Each new order within KF_LEVELS (volatile: KF_LEVELS_V) ticks of its best price is a reading price + c (bid) or
+   price - c (ask), with the gap c learned online. Deeper orders are readings too, with noise r * DEEP_R * (extra
+   depth), so a run of far orders after a jump moves S_hat within a few orders. JUMP_N consecutive readings JUMP_TH+
+   ticks off on one side add JUMP_P to the variance, so S_hat snaps to the new level.
+3. Quiet (p_vol < P_ON): fair = mid + K_S * (S_hat - mid) + K_IMB * imbalance + K_FLOW * flow / depth - K_INV *
+   inventory. Quote at the best price with EDGE_NEW (a resting quote stays while it keeps EDGE) to fair; cross at
+   the opposite best when fair is EDGE_TAKE through it. Sticky orders, size capped by MAX_POS.
+4. Volatile: fair from the V_ settings plus V_K_MOM * (mid - 1 s EMA of mid) + V_K_MOM2 * (mid - 3 s EMA of mid);
+   take the stale book when fair is V_EDGE_TAKE through it (at the best price only, V_QTY per order). No resting
+   quotes.
 
-Two-regime market maker: an online HMM picks the regime, a Kalman filter tracks the hidden price.
-
-Market (round2_public, docs/DATA_ANALYSIS.md): limit orders arrive at floor(S - X) / ceil(S + X) around a hidden
-price S and never cross the book. The generator switches between a quiet regime (new orders about 1 tick from the
-mid, S about 1 tick/sqrt(s)) and a volatile one (about 2 ticks, S 4-6 ticks/sqrt(s), the big jumps). Resting
-quotes earn the spread in quiet spells and get swept in volatile ones; taking the stale book pays in volatile ones.
-
-1. Regime: a 2-state HMM with one observation per new market limit order: n = half-ticks between the order and
-   the mid, beyond the first half tick. n is geometric in each state; the state means are learned online
-   (soft EM, weight H_LR) from the start values H_N_Q0 / H_N_V0. Forward filter with switch probabilities
-   H_PQV (quiet -> volatile) and H_PVQ per order gives p_vol.
-2. Hidden price: a 1-D Kalman filter. Between orders the variance grows by sigma^2 * dt, sigma mixed by p_vol
-   between SIG_Q and SIG_V. Each new order within KF_LEVELS (volatile: KF_LEVELS_V) ticks of its best price is a reading
-   price + c (bid) or price - c (ask); c (learned online per state) is the average distance of new orders from
-   S_hat, and the reading noise comes from the state's geometric spread.
-3. Quiet (p_vol < P_ON): imbalance_mm. fair = mid + K_S * (S_hat - mid) + K_IMB * imbalance
-   + K_FLOW * flow / depth - K_INV * inventory; cross at the opposite best price when fair is EDGE_TAKE through
-   it, otherwise quote at the best price with EDGE to fair. Sticky orders, size capped by MAX_POS.
-4. Volatile: fair from the V_ settings. Cross (sweeping up to fair - V_EDGE_TAKE) when the book is stale.
-   No quote on the side that would grow |inventory|; the other side is cleared (hmm_deep_clear_r3).
-   (100 = no exit order: pure taker, which was best on both halves of round 2).
-Off by default (no gain on round 2): Q_SWEEP (sweep in quiet), H_IOC (IOC gaps as a second HMM observation).
-
-Round 2 (round2_public): 502k with KF depth 1000; depth 4 in both regimes gave +26k on both halves.
-Tuned on the two halves of round2_public, keeping values both halves agree on; most settings sit on flat plateaus.
-
-Round 3 (hmm_deep_r3) = hmm_mm plus jump-aware S readings:
-- New orders deeper than KF_LEVELS(_V) = 2 ticks behind their best price are no longer dropped: they update the
-  Kalman filter with noise r * DEEP_R * (extra depth) and do not train c. One stray far order (long-tailed X)
-  barely moves S_hat; the run of far orders that follows a jump pulls it to the new level within a few orders.
-- Jump boost: JUMP_N consecutive readings more than JUMP_TH ticks from S_hat on the same side add JUMP_P to the
-  filter variance, so S_hat snaps to the new level.
-- P_ON 0.3 (volatile policy a bit earlier).
-Backtests (pnl): round3_public 590,474 (hmm_mm 568,382); r3_eval_twin 928,455 (hmm_mm 731,771). The twin's gain is
-positive in every 20-minute chunk and comes mostly from the seconds around jumps.
-
-hmm_deep617_r3 (2026-11-08) = hmm_deep_r3 with the hmm_617 constants (QTY 150, EDGE 0.2, EDGE_IN 0.4, K_FLOW 1.0,
-V_K_S 0.8, H_N_V0 3.2, H_PQV 0.00003) and KF_LEVELS / KF_LEVELS_V 3. round3_public 620,473, 0 penalty (halves 309.4k /
-310.2k; hmm_617 304.1k / 314.4k, so tied on public). Kept over hmm_617 because the deep-order readings handle big
-jumps: +150k on r3_eval_twin in the untuned version. Settings near this point all score 605-620k on round3_public.
-
-hmm_deep_nm4_r3 (2026-11-08) = hmm_deep617_r3 plus EDGE_IN 0.3, SIG_Q 0.6 (from hmm_617_fit) and H_NMAX 4. H_NMAX caps
-how far one new order can push the regime HMM toward volatile, so scattered far placements no longer flip the strategy
-out of quiet market making (idea from r3_cand_nm6). round3_public by H_NMAX on this base: 20 628,346, 6 650,525,
-5 654,893, 4 664,205. 0 breach penalty.
-
-hmm_deep_clear_r3 (2026-11-08) = hmm_deep_nm4_r3 plus the volatile-branch changes of hmm_vol_clear: no far exit order
-on the reducing side (it used up position room, so flips were late), take at the best opposite price only (V_SWEEP
-False), volatile order size V_QTY 200. round3_public 693,522, 0 penalty (H_NMAX 5: 682,933, 6: 679,350).
-
-Iteration (2026-11-08), round3_public:
-- Rejected: quiet-side take priority (a take cancels same-side passive orders at once and ignores up to 100 lots
-  whose cancel is in flight, with an over-limit unwind): 682,664 incl. 6,047 breach penalty. Not kept in the code.
-- IDG_P (off): the id-gap jump detector (tools/id_gap_jump.py) adds IDG_P to the filter variance on a detection;
-  +4.3k on hmm_617_fit; here IDG_P 25: 694,244 (+722, +0.1%, 0 penalty), too small to matter, left off.
-- Fill audit of the 693,522 run (full logs, markout against the 1 s mid): takes 479k lots at +1.18 ticks/lot by
-  5 s (+567k), passive 697k lots at +0.22 (+151k). |inventory| >= 95 for 46% of the time; while there, the mid moves
-  +1.04 ticks/s in the position's direction (+287k of carry), against ~0 when not at the cap. The leak: 2,428 full
-  flips (+100 -> -100 in one take), 19% reversed within 0.5 s, those cost -281k by 5 s; flips overall +445k.
-- Rejected, staged flips (a normal-strength take against the position only closes it; the other side waits for a
-  confirmation window unless the edge is strong): 50 ms / strong at +0.5: 674,167; 100 ms / +1: 657,309;
-  300 ms / +1: 642,618; 100 ms always staged: 604,574. Median |inventory| falls from 85 to 60-72: reaching the cap
-  fast is worth more than the false flips cost. Not kept in the code.
-- Take decomposition (scratch recorder logging the fair-price parts and Kalman state at each of 5,135 filled takes):
-  reversals within 0.5 s are a volatile-regime effect (28% of volatile takes vs 4% quiet; -299k of -308k). Bad takes
-  follow an S_hat jump (1.4 vs 0.6 ticks in 50 ms) at higher filter variance (P 0.90 vs 0.42). But every volatile
-  edge bucket still earns at 5 s (edge within 0.1 of V_EDGE_TAKE: +0.69 ticks/lot, +77k), so a higher or
-  P-scaled take threshold would cut net profit. The whipsaw is the cost of a profitable fast signal, not a filterable
-  leak.
-- Rejected, quiet takes sized 200 (one order for a full flip; QTY 150 otherwise): 692,949; with EDGE_TAKE 0.2:
-  682,066. Not kept in the code.
-
-Inventory is counted from fills only.
-
-r4_quiet_hyst_ks (2026-11-08) = logs/r4/best_mom.py (hmm_deep_clear_r3 + V_K_MOM 0.2, round4_public 1,071,256) with two
-quiet-maker changes: quote hysteresis (a resting quote is cancelled when its edge to fair drops below EDGE 0.1, a new
-one needs EDGE_NEW 0.25; was 0.2 for both; port of hmm_quiet_hyst) and K_S 0.9 (was 0.75: lean harder on the
-Kalman S estimate in quiet). round4_public 1,091,195 (+19.9k), 0 breach penalty; halves 560,699 / 529,729 (base
-550,783 / 518,894, both +10k). Hysteresis alone 1,078,484; K_S 0.85 / 0.95 / 1.0: 1,089,112 / 1,086,877 / 1,079,733.
-Off-by-default experiments kept in the code, all lost or were noise on round4_public (base 1,091,195 unless noted):
-A_MOM 0.3 / 1.0 (+1.6k / -11.9k on the old base), A_SGN 0.1 (+2.3k, halves +2.3k / -0.1k), A_FX 0.5 (+1.7k old base),
-PULL_MOM 1.0 (-19.5k old base), A_FILL 0.3 (-39k), A_INV 0.3 (-9k), P_PASS 0.1 / 0.2 (-14k / -12k),
-KT_MOM +0.3 / -0.25 (-33k / -110k), K_MOM -0.1 (-54k).
+K_FLOW is scaled by a live estimate of the flow -> mid slope (FLOW_CHECK). Inventory is counted from fills only.
 """
 
 
@@ -109,7 +35,7 @@ from simulator.strategy import BaseStrategy
 
 
 class IdGapJump:
-    """Jump detector from missing market order ids and clamped new orders (copied from tools/id_gap_jump.py)."""
+    """Jump detector from missing market order ids and clamped new orders."""
 
     def __init__(self, window_us: int = 25_000, n_missing: int = 3) -> None:
         self.window_us = window_us
@@ -186,7 +112,7 @@ class R4BestMergeStrategy(BaseStrategy):
     K_GE = 0.0           # quiet: same
     GE_TAU_US = 300_000
     V_K_IMB2 = 0.0       # volatile: fair += V_K_IMB2 * imbalance of the 2 levels behind the touch
-    V_K_MOM2 = -0.05     # volatile: fair += V_K_MOM2 * (mid - EMA of mid over MOM2_TAU_US) (r4_vol_mom3)
+    V_K_MOM2 = -0.05     # volatile: fair += V_K_MOM2 * (mid - EMA of mid over MOM2_TAU_US)
     MOM2_TAU_US = 3_000_000
     P_ON = 0.3  # p_vol above this: volatile policy
     # r4 quiet experiments (all off by default)
@@ -224,7 +150,7 @@ class R4BestMergeStrategy(BaseStrategy):
     JUMP_P = 25.0        # variance added to P on a trigger
     C_LR = 0.0005        # weight of each order in the learned price-to-S gap c
     R_MIN = 0.1
-    # id-gap jump detector (tools/id_gap_jump.py): on a detection add IDG_P to the filter variance; 0: off
+    # id-gap jump detector: on a detection add IDG_P to the filter variance; 0: off
     IDG_P = 0.0
     IDG_WINDOW_US = 25_000
     IDG_MISSING = 3

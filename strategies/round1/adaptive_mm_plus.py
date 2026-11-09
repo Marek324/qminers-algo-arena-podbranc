@@ -1,53 +1,21 @@
-"""Adaptive market maker, upgraded: strategies/round1/adaptive_mm.py (David's) plus room-freeing by shrinking.
+"""Market maker around a hidden-price estimate, with a momentum taker that only trades while it would pay.
 
-Changes from adaptive_mm.py (everything else is identical; see its docstring below):
-- SHRINK: when the target order needs room, the deepest kept order is shrunk with modify_order by the lots needed
-  (it keeps its queue place) instead of being cancelled. A shrink that loses the race against a fill comes back
-  REJECTED; the order is then still live and stays tracked.
-- K_INV 0.0015 instead of 0.002: the only setting change that helped both on the real round 1 and on fresh
-  synthetic round-1 sessions (QUOTE_SIZE 150 and EDGE_TAKE 0.31 helped only on synthetic data).
+Fair = mid + K_S * w * (S_hat - mid) + terms for touch imbalance, recent aggressive flow and inventory. S_hat is the
+average of running means of new limit-order prices on each side (a market order id above the highest seen is new). w
+(0..1) is how well S_hat - mid has predicted the mid 0.5 s ahead over the last ~5 minutes; it drops to 0 on tapes
+where the estimate does not work.
 
-Results (validation = 30 synthetic round-1 sessions never used for choosing; per hour):
-| | real round 1 | synthetic validation | better than adaptive_mm in |
-|---|---|---|---|
-| adaptive_mm.py | 662,359 | 192.1k/h | |
-| SHRINK only | 660,741 | 196.0k/h | 97% of sessions |
-| SHRINK + K_INV 0.0015 (this file) | 678,057 | 206.2k/h | 100% of sessions |
+Quotes: the best price at least EDGE from fair; one tick inside a 2+ tick spread if that leaves EDGE_IN; cross when
+fair is EDGE_TAKE through the opposite best. Orders are as large as the position cap allows. An order the target
+moves a tick away from is kept (it keeps its queue place); when room is needed, the deepest kept order is shrunk
+with modify_order instead of cancelled; a shrink that loses the race against a fill comes back REJECTED and the
+order stays tracked. An order the target moves behind is also kept while it has KEEP_EDGE of edge left.
 
-Original docstring of adaptive_mm.py:
+Taker: holds a directional position when order-flow imbalance (OFI) predicts a move, but only while a paper-traded
+1-lot shadow copy of it is making money.
 
-Adaptive market maker.
-
-Maker leg (the money on round 1): quotes passively around a fair price.
-- Fair = mid, moved K_S of the way toward a hidden-price estimate, plus small terms for touch
-  imbalance, recent aggressive volume and inventory. The tape's limit orders are placed around a
-  hidden price that random-walks, and the visible mid lags it by about 0.5 s; the estimate is the
-  average of running means of newly arrived limit-order prices on each side. (Fair-value design
-  and hidden-price estimate from strategies/round1/imbalance_mm.py.)
-- Quote prices: the best price that keeps at least EDGE ticks from fair; cross the spread when fair
-  is EDGE_TAKE beyond the opposite best price; inside a 2+ tick spread only with EDGE_IN of edge.
-- Orders are as large as the position cap allows. An order the target moves a tick away from is
-  kept rather than re-sent, and the deepest kept order is cancelled when room is needed. An order
-  the target moves *behind* is also kept while it has KEEP_EDGE (0.25) of edge left, so a small
-  dip in fair does not throw away its queue place (joining still needs EDGE, 0.3).
-
-Taker leg (safety, idle on round 1): holds a directional position when order flow imbalance (OFI,
-Cont, Kukanov & Stoikov) predicts a move, but only while a paper-traded 1-lot shadow copy of it is
-making money, so on tapes without momentum it stays off.
-
-Risk: every order is sized so that even if all our open orders on one side fill, |inventory| stays
-within MAX_POS (the exchange penalty starts above 100). Inventory is counted from fills only, so a
-cancel that loses the race against a fill cannot put it out of sync. Our own orders are ignored
-when reading the book, so no signal reacts to us.
-
-Hidden-price check: on tapes where orders are not placed around a hidden price, the estimate
-misleads the quotes (control tapes: about -84k per hour). So its weight is scaled by how well it
-has predicted the mid 0.5 s ahead over roughly the last 5 minutes, and drops to 0 when it hasn't.
-That cut the control-tape losses to -6k ... -24k with no cost on round 1.
-
-Run:  uv run exchange-simulator --strategy strategies/round1/adaptive_mm.py --backtest data/round1.csv --log-dir logs/adaptive --no-logs
-Tune: python3 -I scripts/sweep.py strategies/round1/adaptive_mm.py data/round1.csv -p EDGE=0.25,0.3,0.35
-Experiment history: docs/RESEARCH.md.
+Every order is sized so that |inventory| stays within MAX_POS even if all our resting orders on one side fill.
+Inventory is counted from fills only; our own orders are ignored when reading the book.
 """
 from __future__ import annotations
 
@@ -91,7 +59,7 @@ K_IMB = 0.15  # ticks of fair shift at full touch imbalance
 K_FLOW = 0.8  # ticks of fair shift per average touch size of recent aggressive volume
 FLOW_TAU_US = 100_000  # decay of the aggressive volume
 FLOW_DEPTH_EMA = 0.001  # per-event weight of the touch size that normalises the flow
-K_INV = 0.0015  # ticks of fair shift per lot of inventory away from target; adaptive_mm.py uses 0.002
+K_INV = 0.0015  # ticks of fair shift per lot of inventory away from target
 
 # Hidden-price check: K_S is scaled by how well the estimate has recently predicted the mid
 HP_CHECK = True
@@ -139,7 +107,7 @@ def _touch(levels: list) -> tuple[int | None, int]:
 
 
 class AdaptiveMarketMakerPlus(BaseStrategy):
-    """See the module docstring. State: inventory and target position, our open orders, the
+    """State: inventory and target position, our open orders, the
     decayed signals (OFI, aggressive flow, average touch size) and the shadow taker."""
 
     def __init__(self) -> None:

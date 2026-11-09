@@ -77,13 +77,13 @@ weak jump tier inside the cap (+5k, noise; `r4m_tier`); OFI and depth-imbalance 
   - Launch detached: `timeout 15 ssh -n HOST 'cd REPO && (nohup setsid CMD > log 2>&1 < /dev/null &)'`.
   - **Never `pgrep -f` a pattern that also appears in your own ssh command line** (the watcher matches itself and
     never exits).
-- Tapes on both servers: `data/round4_public.csv` and quarters `data/q/r4_q1..q4.csv` (1,500 s each).
+- Tapes on both servers: `data/round4_train.csv` and quarters `data/q/r4_q1..q4.csv` (1,500 s each).
 - Sweeps: `.venv/bin/python scripts/variant_sweep.py STRAT.py GRID.txt TAPES... --out logs/X -j N`; grid lines are
   `name: CONST=value, CONST=value` (empty = file as is).
 - **Acceptance rule (against overfitting):** a change must be up in at least 3 of 4 quarters, not carried by one jump,
   with neighbouring settings agreeing. Expect ±1% noise from any nudge and ±25% PnL swings between quarters from the
   market alone. Judge by consistency, not totals.
-- Useful scripts: `pnl_attribution.py`, `missed_opps.py`, `jump_value.py`, `lever_oracle.py`, `make_lever_oracle.py`,
+- Useful scripts: `pnl_attribution.py`, `missed_opps.py`, `jump_value.py`, `lever_oracle.py`,
   `robustness.py`, `take_candidates.py`, `jump_feats.py` / `jump_eval.py`, `regime_baum_welch.py`. The backtest explorer
   for `r4m_risk_a` runs on .225 port 8051 (`ssh -L 8051:localhost:8051 ubuntu@185.175.110.225`).
 - Arena: read-only MCP server `arena` (`arena_submissions`, `arena_leaderboard`, `arena_download`, ...). Submitting and

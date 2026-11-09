@@ -9,7 +9,7 @@ scheduling, a backward DP over a 2 ms grid).
 - reactive(X): entry only where the mid already moved >= X ticks in the last 20 ms as seen 5 ms before the entry
   (the latency), on that side only; the exit is still chosen with hindsight. This bounds "detect the jump, then ride".
 
-.venv/bin/python scripts/lever_oracle.py data/round3_public.csv
+.venv/bin/python scripts/lever_oracle.py data/round3_train.csv
 """
 
 from __future__ import annotations

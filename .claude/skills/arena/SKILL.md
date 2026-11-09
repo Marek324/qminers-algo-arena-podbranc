@@ -50,7 +50,7 @@ direct call above in a shell that has `ARENA_TOKEN` set.
 ## How to read the results
 
 - **Public vs private.** A submission is backtested on the round's public tape (type `PUBLIC`, the same file as
-  `data/roundN.csv`). After the deadline, the organisers re-run the final submission on a private tape and store it as
+  `data/roundN_train.csv`). After the deadline, the organisers re-run the final submission on a private tape and store it as
   a `PRIVATE` evaluation, whose `sourceEvaluationId` points to the public one. The published leaderboard and the final
   score use the private result.
 - **Metrics** match the simulator's `result.json`: `fills`, `tradedVolume`, `inventory` (end position), `cash`,

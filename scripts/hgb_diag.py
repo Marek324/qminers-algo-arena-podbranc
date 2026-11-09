@@ -8,7 +8,7 @@ duty cycles, overlap, the lag from each HGB fire to the nearest HMM fire, and th
 import math
 import numpy as np
 
-TAPE = "data/round3_public.csv"
+TAPE = "data/round3_train.csv"
 SLOT = 0.1
 HORIZON = 2.0
 H_NMAX = 5

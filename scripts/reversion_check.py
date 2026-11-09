@@ -2,7 +2,7 @@
 reversion features (z-score of the mid over 30/60/120 s, momentum over 5/30/60 s) with the future mid move at
 5/10/30/60 s, per regime. Round 2 had permanent impact and no reversion; round 3's analysis hints at reversion.
 
-uv run python scripts/reversion_check.py data/round3_public.csv [data/round2_public.csv]
+uv run python scripts/reversion_check.py data/round3_train.csv [data/round2_train.csv]
 """
 
 from __future__ import annotations

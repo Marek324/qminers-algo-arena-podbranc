@@ -70,7 +70,7 @@ Analysis: `uv run analysis.py data/<file>.csv` (tape report, see [ANALYSIS.md](A
 - Best strategy: **market making** (rows 2, 3 and 4 above). `strategies/round1/imbalance_mm.py` makes **276,307**.
 - `flow_momentum.py` loses 3,049,276 here.
 
-### `data/round1.csv` (first scored round, 200 min, 4.4M rows)
+### `data/round1_train.csv` (first scored round, 200 min, 4.4M rows)
 
 - Like v2 but tighter: spread is 1 tick 93% of the time. About 900 lots at the best price; orders live about 0.34 s (median).
 - About 8 IOCs per second, about 1,290 lots per second, balanced.

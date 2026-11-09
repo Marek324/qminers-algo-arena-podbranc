@@ -2,7 +2,7 @@
 that wins on generated sessions must also win on the real tape (round1's model failed it).
 
 usage:
-    uv run python scripts/transfer_check.py round2 data/round2_public.csv \\
+    uv run python scripts/transfer_check.py round2 data/round2_train.csv \\
         strategies/round1/adaptive_mm_plus.py strategies/round2/jump_guard_mm.py:JUMP_MIN=5,K_MOM=0 strategies/round2/jump_guard_mm.py:JUMP_MIN=2 ...
 
 Each variant is a strategy file, optionally followed by `:NAME=value,NAME=value` overrides of its top-level constants.

@@ -1,7 +1,7 @@
 """List every jump-sniper fire of a strategy with an `_ioc` / `iocs` overlay: time, side, limit, lots filled, avg price,
 and the markout of those lots against the market mid 1 s and 5 s later.
 
-usage: .venv/bin/python scripts/sn_fires.py logs/r4/sn/sn2/v_2.py data/round4_public.csv
+usage: .venv/bin/python scripts/sn_fires.py logs/r4/sn/sn2/v_2.py data/round4_train.csv
 """
 import sys
 from pathlib import Path

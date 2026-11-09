@@ -169,9 +169,9 @@ Baseline: 125,470 (60-lot quotes, combined forecast and inventory skew with a 0.
 
 The free zone of 30 lots is a deliberate compromise between v2 PnL and loss on trending data. Cancels on v2 fell from 23k to 9k because the quotes move far less.
 
-## Round 1 (data/round1.csv, 2026-11-07)
+## Round 1 (data/round1_train.csv, 2026-11-07)
 
-Tape statistics come from the existing `analysis` package (`uv run analysis.py data/round1.csv` → `logs/analysis/round1.txt`).
+Tape statistics come from the existing `analysis` package (`uv run analysis.py data/round1_train.csv` → `logs/analysis/round1.txt`).
 
 **The tape:** 4.4M rows over 12,000 s (3.3 h), 368 rows/s.
 - **Spread:** 1 tick 93% of the time (mean 1.07; sample_v2: 1.58).
@@ -534,7 +534,7 @@ simple fair-value bond trading.
 2. Inventory-conditioned thin-queue step-back (hftbacktest version 3) on top of `imbalance_mm.py`.
 3. Keep-or-cancel value from the queue shrink rate (Lehalle–Mounjid style).
 4. Per-inventory thresholds from dynamic programming (Durpie).
-5. Pick finalists by E[PnL] − 0.25·SD on the validation sessions, then confirm once on `data/round1.csv`.
+5. Pick finalists by E[PnL] − 0.25·SD on the validation sessions, then confirm once on `data/round1_train.csv`.
 
 ### Market regimes we know (summary)
 
@@ -894,7 +894,7 @@ Quiet passive fills by market lots queued ahead of our order at the fill (5 s ma
 A deep order moves up as the orders ahead of it are cancelled, and its later front-of-queue fills pay for the
 occasional big sweep. The leak is the price of queue position; hmm_mm's quoting is at a local optimum.
 
-### Filtering volatile crosses by the recent flow: rejected (built as `strategies/hmm_mm_xf.py` and `strategies/hmm_mm_v2_xf.py`, since deleted)
+### Filtering volatile crosses by the recent flow: rejected (built as `strategies/round2/hmm_mm_xf.py` and `strategies/round2/hmm_mm_v2_xf.py`)
 
 Rule: a volatile-regime cross needs the recent aggressive flow on its side (sign · flow/depth > 0.1). In hmm_mm's
 crosses, those against the flow lost −2.2 ticks/lot after 5 s (−42k on 19k lots). On round2_public it added +24k to
@@ -951,7 +951,7 @@ move order-flow and inventory behaviour need a real tape (or a twin whose flow r
 
 ## Deeper research pass: Round 2 audit and next experiments (2026-11-08)
 
-Full synthesis: [round2-deeper-strategy-research.md](../../reports/round2-deeper-strategy-research.md).
+Full synthesis: [report.md](../research_notes/round2-deeper-strategy-research/report.md).
 
 **No, not every researched technique has been tried on Round 2.** Several ideas were tested only on Round 1/`sample_v2`, and others arrived only inside combined strategies. The current reference is **`hmm_mm_v2` at 515,547**, versus `hmm_mm` at 502,258; that difference is within the approximately 26k SE, so use v2 as the baseline and `hmm_mm` as the clean secondary anchor without calling the gain significant. `regime_mm_kf` / `regime_mm` scored 469,844 / 448,818. The exact grid is a settled failure (262k both regimes, 324k volatile only, versus about 470k KF), exact IOC-price oracles also lost (248k–377k; push-corrected 155k–372k), and the ID-gap/clamp detector scored 415,135. Most future-mid oracle value came from orders and IOCs inside the lookahead window, not better present-S information. `RegimeFilter` has only the approximately 172k combined `storm_mm` result, which also changed the far trigger, momentum guard, quotes, cap and storm response; its isolated effect is unknown. Static queue-ahead thresholds and recent-flow cross filters also failed to produce robust gains. Original IOC request prices and invisible IOCs are not observable, so a two-channel estimator requiring them is not a valid proposal. Executed sweep price/volume remain observable auxiliary bounds only.
 
@@ -1128,7 +1128,7 @@ already holds what an online linear model learns from these features, as on roun
 
 ### Round 4: how far can sniping go? (2026-11-08)
 
-**Simulator ceiling** (`scripts/make_lever_oracle.py` on the round-4 hindsight schedule, Q 900, base `hmm_imm_b2`
+**Simulator ceiling** (the oracle generator, now removed, on the round-4 hindsight schedule, Q 900, base `hmm_imm_b2`
 1,039,171): all 349 excursions 2,185,632 (+1,146k, penalty 2.04M); the ones worth ≥ 5k on the tape 1,926,725 (+888k,
 penalty 625k); ≥ 20k (about 9 jumps) 1,437,641 (+398k, penalty 59k). Perfect timing is worth about +0.9M per 6,000 s;
 `r4m_risk_a`'s sniper takes about +51k of it (5%). The oracle enters before the jump; every trigger we have fires after it.

@@ -6,7 +6,7 @@
    the size of new orders vs their distance from the mid, against the residual mid(t + h) - fair(t) from an
    instrumented-strategy log (scripts/residual_signal.py format), per tape half.
 
-usage: .venv/bin/python scripts/cancel_signal.py data/round3_public.csv logs/siglog.csv
+usage: .venv/bin/python scripts/cancel_signal.py data/round3_train.csv logs/siglog.csv
 """
 import sys
 

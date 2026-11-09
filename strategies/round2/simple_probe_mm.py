@@ -1,9 +1,6 @@
-"""Price probe: buy a fixed position once, then never trade again.
+"""Price probe: buy HOLD lots once at the start, then never trade again.
 
-The PnL is cash + the IOC mark-out of the held lots, so after the entry
-PnL(t) = HOLD * (mark(t) - entry). PnL / HOLD + entry is the price path the
-arena chart shows (mark ~ best bid for a small HOLD). Market making is gone on
-purpose: spread capture and inventory swings would distort the curve.
+PnL(t) = HOLD * (mark(t) - entry), so PnL / HOLD + entry is the price path. Not a trading strategy.
 """
 
 from __future__ import annotations

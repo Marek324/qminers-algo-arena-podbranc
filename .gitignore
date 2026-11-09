@@ -3,10 +3,12 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .ruff_cache/
-# The rounds' market data, downloaded from the website
+# Round tapes: data/roundN_{train,val,test}.csv.gz are tracked; the plain .csv (what the simulator reads) and
+# market_data/ (true price and regime labels) are not
 data/*
 !data/.gitkeep
 !data/*.gz
+market_data/
 # Simulator output
 logs/*
 !logs/.gitkeep
@@ -15,5 +17,3 @@ logs/*
 # Private analysis findings (fitted generator values), never commit
 findings/
 # Synthetic tapes (data/synthetic/) stay ignored by data/*: regenerate them, e.g. scripts/gen_tape.py --seed 1 2 3
-barbora/runs/
-barbora/wheels/

@@ -3,7 +3,7 @@ touch (S has jumped away from the book on that side), look at the book LATENCY l
 on the run-over side priced better than the new S estimate (the far order's price +- X_MEAN), and the edge per lot.
 Also checks how much of that edge the mid realizes 2 s later (does the book really catch up).
 
-uv run python scripts/jump_take.py data/round2_public.csv
+uv run python scripts/jump_take.py data/round2_train.csv
 """
 
 from __future__ import annotations

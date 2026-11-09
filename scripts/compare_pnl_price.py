@@ -5,7 +5,7 @@ real best bid / ask / mid once per PnL sample, rebuilds price = PnL / hold + ent
 from the probe run, and compares levels and 1 s increment distributions.
 Writes <log_dir>/price_compare.npz for plotting.
 
-    .venv/bin/python scripts/compare_pnl_price.py data/round2_public.csv logs/probe_experiment
+    .venv/bin/python scripts/compare_pnl_price.py data/round2_train.csv logs/probe_experiment
 """
 
 import bisect
@@ -76,7 +76,7 @@ def replay(tape: Path, sample_t: np.ndarray):
 
 
 def main() -> None:
-    tape = Path(sys.argv[1] if len(sys.argv) > 1 else "data/round2_public.csv")
+    tape = Path(sys.argv[1] if len(sys.argv) > 1 else "data/round2_train.csv")
     log_dir = Path(sys.argv[2] if len(sys.argv) > 2 else "logs/probe_experiment")
     res = json.loads((log_dir / "result.json").read_text())
     hold = res["inventory"]

@@ -5,7 +5,7 @@
 Inputs (data/probes_r3/): r3_simple_probe (+10 lots -> best bid), r3_probe_short_spread (-10 lots -> best ask),
 r3_depth (+100 lots -> 100-lot sweep price). Twin check: logs/r3twin_simple_probe_mm (the long probe re-run on
 data/r3_eval_twin.csv.gz). Price held by a probe = (pnl - cash) / inventory.
-Output: data_visualization/r3_eval_reconstruction.png
+Output: logs/plots/r3_eval_reconstruction.png
 """
 
 import json
@@ -16,7 +16,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 PROBES = ROOT / "data/probes_r3"
-OUT = ROOT / "data_visualization/r3_eval_reconstruction.png"
+OUT = ROOT / "logs/plots/r3_eval_reconstruction.png"
 TWIN = ROOT / "logs/r3twin_simple_probe_mm"
 
 BLUE, ORANGE, AQUA = "#2a78d6", "#eb6834", "#1baf7a"
@@ -131,6 +131,7 @@ def main() -> None:
 
     fig.suptitle("Round 3 evaluation tape, rebuilt from the PnL of three hold probes", fontsize=16,
                  fontweight="bold", color=INK, x=0.06, ha="left", y=0.955)
+    OUT.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(OUT, dpi=130, bbox_inches="tight")
     print(f"wrote {OUT}")
     print(f"storm {storm.mean():.1%}  jumps>={JUMP_T}t {nj}  spread {spread.mean():.2f}  slip {slip.mean():.3f}")

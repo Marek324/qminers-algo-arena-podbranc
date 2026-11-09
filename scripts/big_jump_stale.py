@@ -1,6 +1,6 @@
 """Big jumps only: how much stale liquidity can a 5 ms-latency sniper take, and what is it worth?
 
-usage: .venv/bin/python scripts/big_jump_stale.py data/round4_public.csv [THR ticks] [FAR ticks]
+usage: .venv/bin/python scripts/big_jump_stale.py data/round4_train.csv [THR ticks] [FAR ticks]
 1. Replay the tape with a price-level book (IOCs sweep it, cancels remove what is left).
 2. A trigger is a new limit order placed FAR or more ticks beyond the opposite best price (an ask far above the best ask
    means S jumped up). The jump is "big" if the mid moves THR or more ticks in that direction within 2 s.

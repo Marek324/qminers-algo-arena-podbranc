@@ -1,6 +1,6 @@
 # Data analysis: how the tapes are generated
 
-Reverse-engineered from `data/sample.csv`, `data/sample_v2.csv`, `data/round1.csv` and `data/round2_public.csv` (2026-11-07). The full reports, scripts and online tools are in `findings/`, which is git-ignored.
+Reverse-engineered from `data/sample.csv`, `data/sample_v2.csv`, `data/round1_train.csv` and `data/round2_train.csv` (2026-11-07). The full reports, scripts and online tools are in `findings/`, which is git-ignored.
 
 ## TL;DR
 
@@ -180,7 +180,7 @@ PnL is sensitive to κ: κ 0.0065 gives about 660–700k. An independent fit in 
 
 **Planned next:**
 - A larger sweep: all 2³² seeds, with the first gap matched at any of the first K draws and a second observable confirming it.
-- It is set up as a Slurm job array for IT4I Barbora: `findings/scripts/forensics_rng_*.py` and `.sbatch`.
+- It would run as a Slurm job array on a cluster.
 - It gets a manual review before anything runs there.
 - Rough cost: a few node-hours per combination of RNG and generator structure.
 
@@ -195,7 +195,7 @@ PnL is sensitive to κ: κ 0.0065 gives about 660–700k. An independent fit in 
 
 ## round2_public: same engine, plus jumps
 
-`data/round2_public.csv` (2026-11-07): 6,000s, 2.19M rows, the same CSV format. Fitted with `analysis.py` and `scripts/estimate_model.py`; details in `findings/reports/round2_check.md`.
+`data/round2_train.csv` (2026-11-07): 6,000s, 2.19M rows, the same CSV format. Fitted with `analysis.py` and `scripts/estimate_model.py`; details in `findings/reports/round2_check.md`.
 
 **Unchanged from `round1`:**
 - Poisson limit orders (178.3/s vs 179.8/s) and IOCs (8.9/s vs 8.0/s), side a fair coin.
@@ -304,7 +304,7 @@ The jumps sit inside **volatile spells**. The generator switches abruptly betwee
 
 ## round4_public: same order placement, trending price
 
-`data/round4_public.csv` (2026-11-08 06:00 UTC): 6,000 s, 2.40M rows, the same CSV format. Reports:
+`data/round4_train.csv` (2026-11-08 06:00 UTC): 6,000 s, 2.40M rows, the same CSV format. Reports:
 `logs/analysis/round4_public.txt` (`analysis.py`), `logs/generator/round4_public_fit.md` (`estimate_model.py`),
 `logs/r4/baum_welch.log` (`scripts/regime_baum_welch.py`), all on the servers. Quarter tapes: `data/q/r4_q1..q4.csv`
 (1,500 s each, cut with awk on `Time`).
@@ -468,7 +468,6 @@ hidden-price σ and the take edges for the higher volatility.
 From official arena sandbox evaluation outputs (`docs/results (2)` and `docs/results`), the private competition dataset (`/work/backtest.csv`, 12,000 seconds = 3.33 hours) was reverse engineered via mark-to-market PnL decomposition:
 
 - **Full Report**: [docs/EVALUATION_DATASET_ANALYSIS.md](EVALUATION_DATASET_ANALYSIS.md)
-- **High-Res Visualizations**: [data_visualization/results2_market_reconstruction.png](../data_visualization/results2_market_reconstruction.png)
 - **Key Parameters Inferred**:
   - **Duration**: 12,000.0s (3.33 hr).
   - **Calm Diffusion**: $\sigma = 1.483\text{ ticks}/\sqrt{\text{s}}$ (exact match with `round2_public`).

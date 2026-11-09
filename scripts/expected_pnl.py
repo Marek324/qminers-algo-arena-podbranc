@@ -1,6 +1,6 @@
 """Expected PnL of our strategies on fresh generated sessions of a fitted market model, plus on the real tape.
 
-    .venv/bin/python scripts/expected_pnl.py --name round2 --real data/round2.csv
+    .venv/bin/python scripts/expected_pnl.py --name round2 --real data/round2_train.csv
     .venv/bin/python scripts/expected_pnl.py --name round2 --x-from logs/generator/round2_xfit.json   # variant with the likelihood X
 
 --name is a params file written by estimate_model.py (logs/generator/<name>_params.json). With --x-from, X is replaced

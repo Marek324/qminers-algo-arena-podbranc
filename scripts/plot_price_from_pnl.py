@@ -26,7 +26,7 @@ def main() -> None:
     ap.add_argument("--hold", type=float, default=10, help="lots the probe holds (HOLD in the strategy)")
     ap.add_argument("--entry", type=float, default=0, help="entry price; 0 = chart relative to entry")
     ap.add_argument("--candle", type=float, default=30, help="candle width in seconds")
-    ap.add_argument("--out", default="data_visualization/price_from_pnl.png")
+    ap.add_argument("--out", default="logs/plots/price_from_pnl.png")
     a = ap.parse_args()
 
     with open(a.pnl_csv) as f:

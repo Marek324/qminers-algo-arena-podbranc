@@ -3,7 +3,7 @@ against the HMM's storm state (estimate_model.detect_regimes, 30 s windows; hind
 AUC for "storm now" and "storm within 30 s", correlation between features, and an out-of-sample logistic regression
 (train on the first 60% of the tape, test on the rest).
 
-uv run python scripts/regime_features.py data/round2_public.csv
+uv run python scripts/regime_features.py data/round2_train.csv
 """
 
 from __future__ import annotations

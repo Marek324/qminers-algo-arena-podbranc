@@ -75,7 +75,7 @@ hmm_deep_clear_ks on round3_public (713,244), markout of own fills in ticks per 
 
 ## 5. Experiments and results (2026-11-08)
 
-Scores are PnL on round3_public / r3_eval_twin. Sweeps ran on Barbora (s1-s15, c1-c4) and on Lambda
+Scores are PnL on round3_public / r3_eval_twin. Sweeps ran on an HPC cluster (s1-s15, c1-c4) and on a cloud
 185.175.110.225 (imm1-imm3, p1-p4, x1).
 
 | strategy / change | public | twin | verdict |

@@ -1,6 +1,6 @@
 # Round 1: market model parameters
 
-Parameters of our market model (`analysis/generator.py`) estimated from `data/round1.csv` (200 min, 4.41M rows) on
+Parameters of our market model (`analysis/generator.py`) estimated from `data/round1_train.csv` (200 min, 4.41M rows) on
 2026-11-07. The model can generate new sessions with the same statistics as the round, for testing strategies on more
 than one tape. Background on the model structure: [DATA_ANALYSIS.md](DATA_ANALYSIS.md). How to generate sessions and which
 parameter set to use: [GENERATING_DATA.md](GENERATING_DATA.md). The fitted parameter file is
@@ -115,8 +115,8 @@ quotes and queue position are managed.
 ## Reproducing
 
 ```bash
-uv run analysis.py data/round1.csv                     # analysis report, needed for the fit check
-uv run python scripts/estimate_model.py data/round1.csv  # estimate parameters, check the fit
+uv run analysis.py data/round1_train.csv                     # analysis report, needed for the fit check
+uv run python scripts/estimate_model.py data/round1_train.csv  # estimate parameters, check the fit
 ```
 
 `analysis/target.py` holds the generated-session runs (`compute_bracket` for the strategy check above). Run heavy jobs
@@ -194,6 +194,4 @@ Per hour, on 8 fresh 20-minute sessions (± is the sd across sessions):
 - **For robustness:** vary the parameters across sessions instead of picking one set. The spread of the three
   estimates above is a reasonable range.
 
-Reproduce:
-- Run `findings/barbora/run_targets.py --name round1|round1_ours` (in git-ignored `findings/`).
-- Results go to `logs/generator/target_*.json`.
+The target runs were made with a script that is no longer in the repo; results were in `logs/generator/target_*.json`.

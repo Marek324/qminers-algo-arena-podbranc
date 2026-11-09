@@ -1,6 +1,6 @@
 """Run named constant-override variants of one strategy on several tapes in parallel; print a PnL table.
 
-usage: .venv/bin/python scripts/variant_sweep.py strategies/round3/r3_fire.py grid.txt tape1.csv tape2.csv \
+usage: .venv/bin/python scripts/variant_sweep.py strategies/round4/jteam_r4.py grid.txt tape1.csv tape2.csv \
            --out logs/sweep_fire -j 16
 grid file: one variant per line, `name: NAME=value, NAME=value` (empty override list = the file as is).
 Writes <out>/<variant>__<tape>/result.json and <out>/results.csv (variant, tape, pnl, penalty, fills).

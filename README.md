@@ -1,93 +1,92 @@
-# Qminers trading hackathon starter
+# Qminers Algo Trade Arena
 
-```
-strategies/   template_strategy.py, an empty strategy to copy and fill in; trend_follower.py, a simple working one
-data/         sample.csv.gz, a synthetic hour of trending prices to start on; the rounds downloaded from the website go here too (git-ignored)
-logs/         simulator output (git-ignored)
-simulator/    the exchange simulator package
-explorer/     the backtest explorer package
-```
+Team Podbranč's repo for the [Qminers Algo Trade Arena](https://arena.qminers.com) hackathon (November 2026), built on the organizers' starter template.
+
+The task: write one Python file that trades a single anonymous instrument against a replayed limit order book. Each round gave one public tape to train on; submissions were scored on a hidden validation tape, and the final pick on a private test tape. PnL is the score.
+
+## Results
+
+**4th of 61 overall.**
+
+| round | place | final strategy | test PnL |
+|---|---|---|---:|
+| 1 | 3rd / 61 | [`adaptive_mm_plus`](strategies/round1/adaptive_mm_plus.py) | 667,357 |
+| 2 | 5th / 59 | [`hmm_mm_v2`](strategies/round2/hmm_mm_v2.py) | 1,195,019 |
+| 3 | 4th / 53 | [`hmm_deep_clear_ks`](strategies/round3/hmm_deep_clear_ks.py) | 1,134,420 |
+| 4 | 7th / 52 | [`jteam_r4`](strategies/round4/jteam_r4.py) | 1,885,793 |
+
+Overall score = 0.8·z₁ + z₂ + z₃ + 1.2·z₄ (z = per-round z-score of PnL). Every submission with train / validation / test PnL: [submissions.md](submissions.md).
+
+## What we found
+
+- **The tapes are synthetic.** Limit orders are placed around a hidden fair price S, with Poisson arrivals and random cancel timers ([docs/DATA_ANALYSIS.md](docs/DATA_ANALYSIS.md)). Estimating S from new order prices beats trading on the mid.
+- **Two regimes.** From round 2 the market switches between calm and stormy, and S jumps. In a storm, orders land further from the mid, which shows up before the mid moves.
+- **Jumps leak early.** Far-placed orders and gaps in the market's order ids reveal a jump a few milliseconds before the book reprices ([tools/id_gap_jump.py](tools/id_gap_jump.py)).
+- **Short leverage pays in round 4.** Going briefly past the 100-lot inventory cap on a confirmed jump earns more than the $10k/s penalty ([docs/LEVERAGE.md](docs/LEVERAGE.md)).
+
+## How the strategy evolved
+
+1. **Round 1:** a market maker around an S estimate, keeping its queue place, plus a momentum taker that trades only while it would have paid.
+2. **Round 2:** an online 2-state HMM picks the regime and a 1-D Kalman filter tracks S. It makes markets when calm and takes the stale book in a storm.
+3. **Round 3:** deeper book orders count as Kalman readings, and runs of far orders snap S to the new level.
+4. **Round 4:** a momentum lean, depth imbalance, quote hysteresis, and a jump sniper that briefly goes over the cap.
+
+Full research log, including what didn't work: [docs/RESEARCH.md](docs/RESEARCH.md).
 
 ## Setup
 
-[uv](https://docs.astral.sh/uv/) is a fast Python package and project manager; install it with `curl -LsSf https://astral.sh/uv/install.sh | sh` (or `pip install uv`).
+[uv](https://docs.astral.sh/uv/) is a fast Python package and project manager.
 
 ```bash
-uv sync                                        # Python 3.13 and everything else, into .venv
-uv run python -m gzip -d data/sample.csv.gz    # the simulator reads plain CSV only; one file at a time, the same for each downloaded round
+# curl -LsSf https://astral.sh/uv/install.sh | sh  # if uv is missing
+uv sync                                            # install dependencies
+for f in data/*.csv.gz; do gzip -dkf "$f"; done    # unzip data
 ```
 
-`data/sample.csv.gz` is synthetic and its price trends: one resting order per side, and every few seconds an aggressive order takes part of the touch, after which the quotes keep moving in that direction tick by tick for a few seconds and then give part of the move back. `strategies/trend_follower.py` is a simple trend-following strategy: it sends a one-lot IOC order at the touch in the direction of the trades it has just seen. The rounds look nothing like the sample. They are presented as recorded market data, but `round1` turns out to be synthetic, from the same engine as `sample_v2` (see `docs/DATA_ANALYSIS.md`). To generate more sessions like a round from our fitted model, see `docs/GENERATING_DATA.md`; to fit a new round, `docs/NEW_ROUND.md`.
-
-## Writing a strategy
-
-A strategy is one `.py` file defining one subclass of `BaseStrategy` (with several, the alphabetically first is used), constructible with no arguments:
-
-```python
-from simulator.models import OrderBookSnapshot, OrderRequest, OrderType, PrivateOrderEvent, Side, Trade
-from simulator.strategy import BaseStrategy
-
-
-class MyStrategy(BaseStrategy):
-    def on_order_book_change(self, snapshot: OrderBookSnapshot, trades: list[Trade]) -> None:
-        """After every market event: the public book and all trades since the previous call."""
-
-    def on_private_order_update(self, event: PrivateOrderEvent) -> None:
-        """Every state change of your own orders."""
-```
-
-| Call                                                   | Effect                                                         |
-| ------------------------------------------------------ | -------------------------------------------------------------- |
-| `self.send_order(OrderRequest(side, price, quantity, order_type, client_order_id=None))` | submit; returns the order id (`u000000001`, ...) immediately |
-| `self.cancel_order(order_id)`                          | cancel your resting order                                      |
-| `self.modify_order(order_id, new_quantity)`            | shrink your resting order                                      |
-| `self.now_us()`                                        | simulation time in µs                                          |
-
-`Side.BUY` / `Side.SELL`, `OrderType.LIMIT` / `OrderType.IOC`; prices and quantities are positive integers (prices in ticks).
-
-Submissions run on Python 3.13 with numpy 2.5.4, pandas 3.0.6, scipy 1.18.1 and scikit-learn 1.9.1 available, and are statically checked first: besides the standard library and those packages, import only `simulator.models` and `simulator.strategy.BaseStrategy`. Modules giving system, network, file, threading or introspection access (`os`, `sys`, `io`, `socket`, `subprocess`, `threading`, `importlib`, `inspect`, `gc`, ...), builtins like `open`/`eval`/`exec`/`getattr`/`type`, dunder attributes and `str.format` are rejected.
-
-## Running a backtest
+Run a strategy and open the result:
 
 ```bash
-uv run exchange-simulator --strategy strategies/trend_follower.py --backtest data/sample.csv --log-dir logs/sample --progress
+uv run exchange-simulator --strategy strategies/round4/jteam_r4.py --backtest data/round4_test.csv --log-dir logs/r4 --progress
+uv run backtest-explorer --log-dir logs/r4
+cat logs/r4/result.json                            # pnl, breach_penalty, inventory quantiles
 ```
 
-`logs/sample/result.json` holds the outcome (`pnl`, `cash`, `inventory`, `mark_price`, `breach_penalty`, `traded_volume`, `fills`, `pnl_se`, time-weighted quantiles of `|inventory|`) and `pnl.csv` the PnL sampled every second. Without `--no-logs` the directory also gets `run.jsonl`, `events.csv`, `book_deltas.csv` and `trades.csv`, several hundred MB per full round. Use `--no-logs` when you only need the result and the PnL curve; it is much faster. `--public-depth N` (default 20) sets how many ticks of the book you see.
-
-## Exploring a backtest
+Other entry points:
 
 ```bash
-uv run backtest-explorer --log-dir logs/sample     # http://127.0.0.1:8050, --port to change
+uv run analysis.py data/round4_train.csv                          # tape report -> logs/analysis/
+uv run --with streamlit streamlit run dashboard/app.py            # tape and strategy dashboard
+uv run python scripts/robustness.py strategies/round4/jteam_r4.py # overfitting checks
 ```
 
-A Dash app over a full-logs run (not `--no-logs`): best bid/ask with your fills marked, your PnL over time, the reconstructed order book at any clicked time, and the event log.
-
-## How the exchange works
-
-**One instrument, replayed.** Each CSV row is a market participant's action:
+## Repo structure
 
 ```
-Time,Operation,OrderId,Side,Volume,Price,Lifespan
-0.003823,Insert,1000001,B,43,9999,G
+strategies/       All submitted strategies, by round (roundN/)
+data/             Each round's tapes: roundN_train / roundN_val / roundN_test; only *_train was given during the hackathon
+
+analysis/         Data analysis framework (analysis.py)
+dashboard/        Streamlit dashboard for tapes and strategy runs
+scripts/          Arena MCP server, analysis scripts and parameter sweeps
+docs/             Market rules, data analysis and the research log, written for the agents and for us
+research_notes/   Literature notes (LOB market making, HFT, validation)
+tools/            Building blocks copied into strategies (a submission is one file)
+experiments/      Archived experiments
+
+simulator/        Provided in the template
+explorer/         Provided in the template
+
+submissions.md    PnL of every submitted strategy
 ```
 
-`Time` in seconds; `Operation` is `Insert` or `Cancel` (of `OrderId`); `Side` `B`/`A`; `Lifespan` `G` = resting limit order, `F` = immediate-or-cancel. The tape is fixed and does not react to you; your orders only add to and take from the book it builds.
+`docs/` is a working log: it names many strategies that were never submitted, and those were deleted. They are still in git history.
 
-**Matching.** Price-time priority. An incoming order (market or yours) matches against the opposite side while prices cross, each fill at the resting (maker) order's price; a LIMIT residual rests at the back of its price level, an IOC residual is cancelled. Market orders can trade with yours; your orders never trade with each other. No fees.
+## How we worked
 
-**Latency.** Every `send_order`, `cancel_order` and `modify_order` takes effect at $t + 5\text{ms}$, where $t$ is the simulation time at which you call it: it is applied just before the first market event with timestamp $\ge t + 5\text{ms}$, so the book may have moved by then. An order you place is therefore never filled within 5 ms, and a cancel can lose the race against a fill.
+Most of the code was written by AI coding agents, steered and checked by the four of us. [AGENTS.md](AGENTS.md) is the brief every agent read. `.claude/skills/` holds repeatable workflows, and `scripts/arena_mcp.py` is a read-only MCP server for the arena site. We used Claude Opus 5.5, Gemini Flash, Gemini Argon, Kimi k3.1 pro and GLM 5.3, on four $20 Claude subscriptions.
 
-**Feeds.**
-- `on_order_book_change` fires after every market event, with a snapshot of every individual order (id, side, price, quantity, `owner` `"market"`/`"user"`) within `public_depth` ticks of the best price on each side, and the list of trades (market-vs-market included) since the previous call. Fills caused by your own order activating appear in the next call's `trades`.
-- `on_private_order_update` fires synchronously for your orders: `ACCEPTED`, then one `PARTIALLY_FILLED`/`FILLED` per match (`fill_price`, `filled_quantity`, `remaining_quantity`), `CANCELED` (your cancel, or an IOC residual), `MODIFIED`, or `REJECTED`. Cancelling anything but your own resting order, or a modify that doesn't shrink it, is `REJECTED`; a modify of an unknown id is silently ignored.
+Strategies use only the Python standard library (`math`, `collections`), although the sandbox also allowed numpy, pandas, scipy and scikit-learn. Analysis uses numpy, pandas, scipy, scikit-learn and matplotlib, and the dashboard uses Streamlit and Plotly.
 
-**Limits and scoring.** With inventory $I$ (signed), resting same-side quantity $R$ and order quantity $q$ ($s = \pm 1$ for buy/sell):
+## License
 
-$$|I + s (R + q)| > 1000 \Rightarrow \text{order REJECTED at acceptance}$$
-
-$$\text{penalty} = 10{,}000 \cdot \int \mathbb{1}\big[|I(t)| > 100\big] dt \quad (\$ \text{ per second})$$
-
-$$\text{PnL} = \text{cash} + \text{markout}(I) - \text{penalty}$$
-
-$\text{markout}(I)$ is the cash from liquidating $I$ against the resting *market* orders on the opposite side, best price outwards (volume beyond the book at the last swept price, or at the last traded price if that side is empty). It is computed at the end and every second for `pnl.csv` and `pnl_se`.
+Our code is MIT ([LICENSE](LICENSE)). `simulator/`, `explorer/`, the two reference strategies and the market data belong to Qminers.

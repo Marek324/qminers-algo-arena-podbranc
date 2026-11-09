@@ -5,7 +5,7 @@ through the opposite best price, records one row per side: features at decision 
 own rule takes, and the label. Label = what one lot taken at that price earns: the order lands 5 ms later,
 fills only if the opposite best is still at that price or better, and is marked against the mid h seconds on.
 
-usage: .venv/bin/python scripts/take_candidates.py strategies/round3/hmm_deep_clear_ks.py data/round3_public.csv \
+usage: .venv/bin/python scripts/take_candidates.py strategies/round3/hmm_deep_clear_ks.py data/round3_train.csv \
            --out logs/takecand/r3.npz
 Works for strategies with the hmm_deep_clear_ks attribute names (s, P, pv, mid, inv, flow_scale, flow, depth).
 """

@@ -1,6 +1,6 @@
 """Record a strategy's S estimate (attribute `s`), regime (`pv`) and the visible new market orders and trades.
 
-usage: .venv/bin/python scripts/s_probe.py strategies/<x>.py data/round3_public.csv logs/features/<out>.npz
+usage: .venv/bin/python scripts/s_probe.py strategies/<x>.py data/round3_train.csv logs/features/<out>.npz
 Saves per callback: t (s), mid, s_hat, pv; per new market limit order seen: nt, nside, npx, nbb, nba (touch before);
 per market-taker trade: tt, tpx, tq, tside (+1 buyer-initiated).
 Compare s_hat with the true S from IOC prices in logs/features/<tape>_events.npz (scripts/s_eval.py).

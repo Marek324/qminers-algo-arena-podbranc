@@ -4,11 +4,11 @@ Qminers Algo Trade Arena hackathon. Our job is to write a **trading strategy**. 
 
 ## What you may change
 
-- `strategies/`: new strategy files. Copy `strategies/template_strategy.py` into a new file and work there. Strategies are sorted by the round they were built for: `strategies/round1/`, `strategies/round2/`, and `strategies/roundN/` for each new round. Put new work in the current round's folder. The top level holds only the two reference files. Oracles (`oracle_overfit_round1`, `oracle_lever_b2_*`, `dumb`) and probes (`simple_probe_mm`, `probe_*`) live in their round's folder too; never submit them. File names stay unique across folders, because the dashboard lists them by name. When you move a strategy, update the paths that reference it.
+- `strategies/`: only code we submitted to the arena (same code as what ran; docstrings and comments cleaned up; `arena_download` re-fetches the originals), in `strategies/round1/` … `strategies/round4/` (plus the two reference files at the top level). Scores per round: [submissions.md](submissions.md). New work: copy `strategies/template_strategy.py` into the current round's folder. File names stay unique across folders, because the dashboard lists them by name. Unsubmitted strategies and oracles from rounds 1-4 were removed; they are in git history.
 - `tools/`: reusable building blocks (regressions, estimators, ...) that get **copied** into strategy files. See [Tools](#tools).
 - `docs/`, `AGENTS.md`, and helper scripts for analysis or parameter sweeps (e.g. `scripts/`, notebooks). These never get submitted.
 - `experiments/`: inactive experiments preserved for later, with their analysis, strategies, helpers and result summaries kept together. `experiments/inventory/` is the archived inventory-penalty/endgame study: its results are historical round-1 evidence, not active recommendations; re-run it on the new dataset before reconsidering it.
-- `data/` and `logs/`: local data and backtest output. Both are git-ignored, so don't commit them.
+- `data/` and `logs/`: local data and backtest output, git-ignored except the gzipped tapes `data/*.csv.gz`. `data/` holds only the round tapes: roundN_train.csv (the public tape), roundN_val.csv (the arena validation tape; round 1 has none, so round1_val.csv is the train tape), roundN_test.csv (the private tape). The true hidden price and regime labels of each tape are in `market_data/roundN/` (`*.fair.csv`, `*.regime.csv`).
 
 ## What you must not change
 
@@ -66,7 +66,7 @@ Don't write unit tests, integration tests, e2e tests or test fixtures, and don't
 
 ```bash
 uv sync
-uv run python -m gzip -d data/<file>.csv.gz      # simulator reads plain CSV only
+for f in data/*.csv.gz; do gzip -dkf "$f"; done   # simulator reads plain CSV; only the .gz are in git
 uv run exchange-simulator --strategy strategies/<mine>.py --backtest data/<file>.csv --log-dir logs/<run> --no-logs
 uv run exchange-simulator --strategy strategies/<mine>.py --backtest data/<file>.csv --log-dir logs/<run> --progress   # full logs
 uv run backtest-explorer --log-dir logs/<run>    # needs a full-logs run
@@ -77,7 +77,7 @@ uv run backtest-explorer --log-dir logs/<run>    # needs a full-logs run
 - Check a strategy for overfitting before trusting its score: `uv run python scripts/robustness.py strategies/<mine>.py` runs it on every tape in data/, over time chunks, on a mirrored market and reshuffled sessions (`--sensitivity all` adds parameter nudges); the dashboard's Robustness tab shows the report.
 - Measure a strategy against a known generator: `.venv/bin/python scripts/gen_tape.py --seed 1` writes a `round1` twin to `data/synthetic/` (deterministic per seed) plus its true hidden price S (`_S.npz`). The tapes are git-ignored: regenerate the three used in the docs with `scripts/gen_tape.py --seed 1 2 3` (about 150 MB each); `analysis.py` on it gives the hindsight max, and `scripts/oracle_s_mm.py` / `scripts/sweep_oracle.py` run a true-S oracle. Fit and results: [docs/DATA_ANALYSIS.md](docs/DATA_ANALYSIS.md#synthetic-twin-of-round1).
 - The score is `pnl` in `logs/<run>/result.json`. Also check `breach_penalty` (should be 0) and the `abs_inventory_q*` quantiles.
-- `data/sample.csv` is synthetic and trends, and the real rounds look nothing like it, so don't tune to the sample. The deck calls the rounds "recorded market data", but analysis shows `round1` is synthetic too. It comes from the same engine as `sample_v2.csv`, with different parameters. The generator, its fitted parameters and the strategy implications are in [docs/DATA_ANALYSIS.md](docs/DATA_ANALYSIS.md). Expect parameters to change between rounds, so estimate them online instead of hard-coding them.
+- Tune on `roundN_train.csv` and check on `roundN_val.csv`; `roundN_test.csv` is the held-out private tape. The deck calls the rounds "recorded market data", but analysis shows `round1` is synthetic too. The generator, its fitted parameters and the strategy implications are in [docs/DATA_ANALYSIS.md](docs/DATA_ANALYSIS.md). Expect parameters to change between rounds, so estimate them online instead of hard-coding them.
 - Before submitting, check the file only uses allowed imports and builtins, then run a full backtest of that exact file.
 - Submit at arena.qminers.com → Dashboard → Submit strategy (done by a human).
 - Leaderboard, rounds, deadlines and our submission results: the read-only `arena` MCP server (`scripts/arena_mcp.py`, `.mcp.json`). Setup (an `ARENA_TOKEN` env var copied from the site), tools and troubleshooting: [.claude/skills/arena/SKILL.md](.claude/skills/arena/SKILL.md).

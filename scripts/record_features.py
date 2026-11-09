@@ -3,7 +3,7 @@
 Samples every GRID_US (default 20 ms) and saves an .npz with one row per sample. Used to fit and compare
 fair-value predictors offline (scripts/fit_fair.py).
 
-usage: uv run python scripts/record_features.py data/round1.csv logs/features/round1.npz [grid_us]
+usage: uv run python scripts/record_features.py data/round1_train.csv logs/features/round1.npz [grid_us]
 """
 import math
 import sys

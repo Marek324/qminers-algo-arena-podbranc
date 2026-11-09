@@ -11,7 +11,7 @@ after verifying the exported traversal reproduces predict_proba exactly.
 import math
 import numpy as np
 
-TAPE = "data/round3_public.csv"
+TAPE = "data/round3_train.csv"
 SLOT = 0.1
 HORIZON = 2.0
 LABEL_TICKS = 5.0

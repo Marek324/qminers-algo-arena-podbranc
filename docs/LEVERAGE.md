@@ -24,8 +24,8 @@ Hindsight bound, from the tape (`scripts/lever_oracle.py`, 2 ms grid, IOC in and
 | 300 | 245k (169) | 176k | 31k |
 | 900 | 936k (222) | 633k | 148k |
 
-Hindsight in the real simulator (`scripts/make_lever_oracle.py` writes `strategies/round3/oracle_lever_b2_*.py`,
-hmm_imm_b2 plus the schedule; lever lots are tracked apart, so b2 quotes as before):
+Hindsight in the real simulator (an oracle strategy, hmm_imm_b2 plus the schedule; its generator and base strategy are
+in git history only; lever lots are tracked apart, so b2 quotes as before):
 
 | Variant | PnL | Penalty | vs b2 728,501 |
 |---|---:|---:|---:|
@@ -65,8 +65,6 @@ Reproduce:
 
 ```bash
 .venv/bin/python scripts/lever_oracle.py data/<tape>.csv --dump      # bounds + logs/lever_schedule_<tape>_q*.json
-.venv/bin/python scripts/make_lever_oracle.py logs/lever_schedule_<tape>_q900.json 900 [min_net]
-.venv/bin/exchange-simulator --strategy strategies/round3/oracle_lever_b2_q900.py --backtest data/<tape>.csv --log-dir logs/<run> --no-logs
 ```
 
 The oracle strategies read the future: never submit them.

@@ -6,7 +6,7 @@
 3. Direction: does anything before a jump predict its sign (previous jump, net taker flow, new-limit side imbalance,
    drift, the new-order price estimate of S minus the mid)?
 
-uv run python scripts/precursors.py data/round2_public.csv
+uv run python scripts/precursors.py data/round2_train.csv
 """
 
 from __future__ import annotations

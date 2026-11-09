@@ -1,53 +1,21 @@
-"""TEST VERSION: hmm_mm_v2.py with four settings tuned on the round 2 validation twin (docs/RESEARCH.md).
+"""Two-regime market maker: an online HMM picks the regime, a Kalman filter tracks the hidden price S.
 
-Purpose: a validation run of this file tells whether tuning on generated tapes transfers to the real market.
+1. Regime: a 2-state HMM with one observation per new market limit order, n = half-ticks between the order and the
+   mid beyond the first half tick. n is geometric in each state with means learned online (soft EM, H_LR); the
+   forward filter with switch probabilities H_PQV / H_PVQ gives p_vol.
+2. Price: a 1-D Kalman filter whose variance grows by sigma^2 * dt, sigma mixed between SIG_Q and SIG_V by p_vol.
+   Each new order within KF_LEVELS (volatile: KF_LEVELS_V) ticks of its best price is a reading price + c (bid) or
+   price - c (ask), with the gap c learned online.
+3. Quiet (p_vol < P_ON): fair = mid + K_S * (S_hat - mid) + K_IMB * imbalance + K_FLOW * flow / depth - K_INV *
+   inventory. Quote at the best price with EDGE to fair; cross at the opposite best when fair is EDGE_TAKE through
+   it. Sticky orders, size capped by MAX_POS.
+4. Volatile: fair from the V_ settings; take the stale book when fair is V_EDGE_TAKE through it (sweeping up to fair
+   - V_EDGE_TAKE). No resting quotes.
 
-Changes from hmm_mm_v2.py (everything else identical):
-- K_FLOW 0.8 -> 0.5, K_INV 0.002 -> 0.001, EDGE_TAKE 0.25 -> 0.35 (quiet regime), SIG_V 10 -> 15 (volatile Kalman).
-Expected, from local backtests:
-- validation twin (first version, since replaced by scripts/path_twin.py; the validation session's real price path): +139k (seed 1) and +135k (seed 2)
-  over hmm_mm_v2. If the twin is right, validation about 1.29M + 0.13M = 1.42M.
-- real round2_public: 432,669 against 515,547 (-83k, -16%), no penalty. If public is the better guide, validation about 1.08M.
-Arena validation result: 1,293,574 against hmm_mm_v2's 1,291,224, a tie (+2k, well inside the ~40k noise). Neither
-the twin's +135k nor public's -16% transferred: keep hmm_mm_v2.
-The generated order flow favours these settings on any generated tape, so a score near 1.08M means generated tapes
-cannot be used for tuning flow and inventory settings; near 1.42M means they can.
+K_FLOW is scaled by a live estimate of the flow -> mid slope (FLOW_CHECK). Inventory is counted from fills only.
 
-Docstring of hmm_mm_v2.py:
-
-hmm_mm (JPod's) with two changes: a faster learned price-to-S gap and taker sweeps as bounds on S.
-
-Changes from strategies/round2/hmm_mm.py, everything else identical:
-- C_LR 0.002 instead of 0.0005: the gap c between new orders and S is learned faster.
-- Taker sweep bounds: market takers are priced at round(S +- 1), so a taker buy that trades up to price p proves
-  S >= p - 1 (with no slack); S_hat is pulled half way (SWEEP_W 0.5) to that bound when it sits below it. Sells
-  mirror it.
-Round 2 training tape: 515,547 vs 502,258 (both halves up: +2.6k, +10.6k; within noise, se ~26k).
-
-Docstring of hmm_mm.py:
-
-Two-regime market maker: an online HMM picks the regime, a Kalman filter tracks the hidden price.
-
-Market (round2_public, docs/DATA_ANALYSIS.md): limit orders arrive at floor(S - X) / ceil(S + X) around a hidden
-price S and never cross the book. The generator switches between a quiet regime (new orders about 1 tick from the
-mid, S about 1 tick/sqrt(s)) and a volatile one (about 2 ticks, S 4-6 ticks/sqrt(s), the big jumps). Resting
-quotes earn the spread in quiet spells and get swept in volatile ones; taking the stale book pays in volatile ones.
-
-1. Regime: a 2-state HMM with one observation per new market limit order: n = half-ticks between the order and
-   the mid, beyond the first half tick. n is geometric in each state; the state means are learned online
-   (soft EM, weight H_LR) from the start values H_N_Q0 / H_N_V0. Forward filter with switch probabilities
-   H_PQV (quiet -> volatile) and H_PVQ per order gives p_vol.
-2. Hidden price: a 1-D Kalman filter. Between orders the variance grows by sigma^2 * dt, sigma mixed by p_vol
-   between SIG_Q and SIG_V. Each new order within KF_LEVELS ticks of its best price is a reading
-   price + c (bid) or price - c (ask); c (learned online per state) is the average distance of new orders from
-   S_hat, and the reading noise comes from the state's geometric spread.
-3. Quiet (p_vol < P_ON): imbalance_mm. fair = mid + K_S * (S_hat - mid) + K_IMB * imbalance
-   + K_FLOW * flow / depth - K_INV * inventory; cross at the opposite best price when fair is EDGE_TAKE through
-   it, otherwise quote at the best price with EDGE to fair. Sticky orders, size capped by MAX_POS.
-4. Volatile: fair from the V_ settings. Cross (sweeping up to fair - V_EDGE_TAKE) when the book is stale.
-   No quote on the side that would grow |inventory|; the other side rests one exit order V_EXIT_EDGE from fair.
-
-Inventory is counted from fills only.
+Taker sweeps bound S: takers are priced at round(S +- 1), so a taker buy that trades up to p means S >= p - 1; S_hat
+is pulled SWEEP_W of the way to that bound when it sits below it (sells mirror it).
 """
 
 from __future__ import annotations
@@ -75,11 +43,11 @@ class HmmMMV2TwinStrategy(BaseStrategy):
     # quiet regime (round 1 market maker settings)
     EDGE = 0.3
     EDGE_IN = 0.5
-    EDGE_TAKE = 0.35     # hmm_mm_v2: 0.25
+    EDGE_TAKE = 0.35
     K_IMB = 0.15
-    K_INV = 0.001        # hmm_mm_v2: 0.002
+    K_INV = 0.001
     K_S = 0.75
-    K_FLOW = 0.5         # hmm_mm_v2: 0.8
+    K_FLOW = 0.5
     # volatile regime
     V_EDGE_TAKE = 0.55
     V_EXIT_EDGE = 100.0
@@ -96,9 +64,9 @@ class HmmMMV2TwinStrategy(BaseStrategy):
     H_NMAX = 20
     # Kalman filter for S
     SIG_Q = 0.5          # ticks / sqrt(s) in the quiet state
-    SIG_V = 15.0         # in the volatile state (hmm_mm_v2: 10)
+    SIG_V = 15.0         # in the volatile state
     KF_LEVELS = 1000     # use new orders up to this many ticks behind their best price
-    C_LR = 0.002         # weight of each order in the learned price-to-S gap c (hmm_mm: 0.0005)
+    C_LR = 0.002         # weight of each order in the learned price-to-S gap c
     R_MIN = 0.1
     SLACK = 0.0          # taker sweep bound: ticks of slack below (above) the proven bound
     SWEEP_W = 0.5        # how far S_hat moves to the bound

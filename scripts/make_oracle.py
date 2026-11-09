@@ -1,6 +1,6 @@
 """Build a deliberately overfit strategy: round1's whole future mid path is pasted into the file.
 
-usage: uv run python scripts/make_oracle.py data/round1.csv strategies/round1/oracle_overfit_round1.py [H_US EDGE EDGE_TAKE K_INV SWEEP]
+usage: uv run python scripts/make_oracle.py data/round1_train.csv strategies/round1/oracle_overfit_round1.py [H_US EDGE EDGE_TAKE K_INV SWEEP]
 SWEEP 1: when crossing, bid up to floor(fair - EDGE_TAKE) instead of only the best price (takes deep levels on jumps).
 The strategy quotes around fair = the mid H_US microseconds in the future (looked up in the table),
 using the same quoting/ladder/risk logic as strategies/round1/imbalance_mm.py.

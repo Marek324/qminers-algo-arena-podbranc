@@ -121,7 +121,7 @@ def main(path: str) -> None:
     follow = move[3] - 2 * half_spread
     if follow > 1:
         print(f'  FLOW FOLLOWING: mid runs {move[3]:.1f} ticks in 3s after aggression, '
-              f'more than the round-trip spread. Start from strategies/round1/flow_momentum.py')
+              f'more than the round-trip spread. Start from a momentum taker')
     elif edge[5] > 0.2:
         print(f'  MARKET MAKING: resting fills earn {edge[5]:.2f} ticks/lot after 5s and flow is '
               f'uninformed. Start from strategies/round1/imbalance_mm.py')
